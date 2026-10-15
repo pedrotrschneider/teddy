@@ -1,0 +1,90 @@
+import 'package:flutter/widgets.dart';
+import 'platform_detector.dart';
+
+/// Layout and sizing constants used throughout the application
+/// Screen width breakpoints for responsive design
+class ScreenBreakpoints {
+  static const double mobile = 600;
+
+  static const double wideTablet = 900;
+
+  static const double desktop = 1200;
+
+  static const double largeDesktop = 1600;
+
+  // Legacy alias for backward compatibility
+  static const double tablet = mobile;
+
+  static bool isMobile(double width) => width < mobile;
+
+  static bool isTablet(double width) => width >= mobile && width < desktop;
+
+  static bool isDesktop(double width) => width >= desktop && width < largeDesktop;
+
+  static bool isDesktopOrLarger(double width) => width >= desktop;
+
+  static bool isWideTabletOrLarger(double width) => width >= wideTablet;
+}
+
+/// Animation and notification durations.
+class AppDurations {
+  static const Duration animMedium = Duration(milliseconds: 300);
+  static const Duration animSlow = Duration(milliseconds: 500);
+  static const Duration snackBarDefault = Duration(seconds: 3);
+  static const Duration snackBarLong = Duration(seconds: 4);
+}
+
+class GridLayoutConstants {
+  static const double posterAspectRatio = 2 / 3.3;
+
+  static const double fullCardPosterAspectRatio = 2 / 3;
+
+  static const double episodeThumbnailAspectRatio = 16 / 9;
+
+  static const double episodeGridCellAspectRatio = 1.4;
+
+  /// 1:1 music artwork (albums/artists/tracks). Also the full-card image
+  /// ratio for square items, mirroring [fullCardPosterAspectRatio].
+  static const double squareAspectRatio = 1 / 1;
+
+  /// Square grid cell: 1:1 image plus the same text band the poster cell
+  /// reserves ([posterAspectRatio] adds 0.3 to the 2:3 image's denominator).
+  static const double squareGridCellAspectRatio = 2 / 2.3;
+
+  /// Inter-card gutter for square (music) grids on touch platforms. Cards
+  /// already carry their own 3px internal padding, so the net visual gutter
+  /// is ~14px horizontal. Automotive keeps its larger [crossAxisSpacing].
+  static const double squareGridSpacing = 8.0;
+
+  static double get crossAxisSpacing => PlatformDetector.isAutomotive() ? 24 : 0;
+  static double get mainAxisSpacing => PlatformDetector.isAutomotive() ? 24 : 0;
+
+  static double fullCardGridSpacingForScale(double scale) => (12 * scale).clamp(8, 18).toDouble();
+
+  /// Standard grid padding
+  static EdgeInsets get gridPadding =>
+      PlatformDetector.isAutomotive() ? const EdgeInsets.all(24) : const EdgeInsets.only(left: 2, right: 2, bottom: 2);
+}
+
+class ContentLayoutConstants {
+  /// Space between content rows; card padding and header-to-card gaps remain
+  /// independent so tightening shelves does not change their geometry.
+  static const double rowGapScale = .6;
+}
+
+class TvLayoutConstants {
+  static const double horizontalInset = 72;
+  static const double shelfHorizontalInset = 56;
+  static const double shelfVerticalGap = 32 * ContentLayoutConstants.rowGapScale;
+  static const double heroContentMaxWidth = 760;
+  static const double heroLogoWidth = 520;
+  static const double heroLogoHeight = 150;
+  static const double compactHeroLogoWidth = 420;
+  static const double compactHeroLogoHeight = 112;
+
+  static double scaleForHeight(double height) => (height / 1080).clamp(0.85, 1.35).toDouble();
+
+  static double scaleForSize(Size size) => scaleForHeight(size.height);
+
+  static double scaleOf(BuildContext context) => scaleForSize(MediaQuery.sizeOf(context));
+}

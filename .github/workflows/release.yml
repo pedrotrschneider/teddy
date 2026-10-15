@@ -1,0 +1,199 @@
+name: Teddy releases
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+permissions:
+  contents: read
+# One release train across both branches. PR builds have independent groups.
+concurrency:
+  group: releases-${{ github.event_name == 'pull_request' && github.run_id || 'publish' }}
+  cancel-in-progress: false
+  queue: max
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      core: ${{ steps.version.outputs.core }}
+      major: ${{ steps.version.outputs.major }}
+      tag: ${{ steps.version.outputs.tag }}
+      build_number: ${{ steps.version.outputs.build_number }}
+      publish: ${{ steps.version.outputs.publish }}
+      promote: ${{ steps.version.outputs.promote }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: ${{ github.event_name == 'push' }}
+      - run: python3 -m unittest discover -s scripts -p test_release_version.py
+      - id: version
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: python3 scripts/release_version.py
+  build:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos
+            os: macos-26
+            arch: universal
+          - platform: windows
+            os: windows-2025
+            arch: x64
+          - platform: linux
+            os: ubuntu-24.04
+            arch: x64
+          - platform: linux
+            os: ubuntu-24.04-arm
+            arch: arm64
+          - platform: android
+            os: ubuntu-24.04
+            arch: universal
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      RELEASE_VERSION: ${{ needs.version.outputs.version }}
+      BUILD_CORE: ${{ needs.version.outputs.core }}
+      BUILD_NUMBER: ${{ needs.version.outputs.build_number }}
+      TARGET_PLATFORM: ${{ matrix.platform }}
+      TARGET_ARCH: ${{ matrix.arch }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Make room for Android native builds
+        if: matrix.platform == 'android'
+        run: |
+          # Only disposable hosted-runner tools unused by this Android job.
+          df -h / "$GITHUB_WORKSPACE"
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          : "${ANDROID_HOME:?Hosted Android SDK path is required}"
+          # Install our pinned NDK below instead of retaining all bundled NDKs.
+          sudo rm -rf "$ANDROID_HOME/ndk" "$ANDROID_HOME/system-images"
+          sudo apt-get clean
+          df -h / "$GITHUB_WORKSPACE"
+          python3 -c 'import shutil; free=shutil.disk_usage(".").free; assert free >= 20 * 1024**3, f"Android build needs at least 20 GiB free; found {free / 1024**3:.1f} GiB"'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.0'
+          # Linux ARM64 has no release archive for this pin. The action's
+          # git mode checks out this exact release tag, not moving master.
+          channel: ${{ matrix.platform == 'linux' && matrix.arch == 'arm64' && 'master' || 'stable' }}
+          cache: true
+      - name: Verify Apple SDK
+        if: matrix.platform == 'macos'
+        run: |
+          xcodebuild -version
+          xcrun --sdk macosx --show-sdk-version
+          python3 -c 'import subprocess; v=subprocess.check_output(["xcrun","--sdk","macosx","--show-sdk-version"], text=True); assert int(v.split(".")[0]) >= 26, "connectivity_plus requires macOS SDK 26 or newer"'
+      - uses: actions/setup-java@v4
+        if: matrix.platform == 'android'
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: android-actions/setup-android@v3
+        if: matrix.platform == 'android'
+        with:
+          # setup-android v3 otherwise requests Google's removed tools package.
+          packages: platform-tools
+      - name: Bound Android build resource use
+        if: matrix.platform == 'android'
+        run: |
+          # User-level properties override the workstation's 8 GiB heap and
+          # 4 GiB metaspace defaults without changing developer builds.
+          mkdir -p "$HOME/.gradle"
+          cat > "$HOME/.gradle/gradle.properties" <<'EOF'
+          org.gradle.jvmargs=-Xmx3G -XX:MaxMetaspaceSize=1G -XX:ReservedCodeCacheSize=256m -XX:+HeapDumpOnOutOfMemoryError
+          org.gradle.workers.max=2
+          org.gradle.parallel=false
+          org.gradle.vfs.watch=false
+          EOF
+          free -m
+      - name: Install Android native toolchain
+        if: matrix.platform == 'android'
+        run: sdkmanager 'platforms;android-36' 'build-tools;36.1.0' 'ndk;29.0.14206865' 'cmake;4.1.2'
+      - name: Install Linux dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev libsecret-1-dev liblzma-dev libstdc++-12-dev libwayland-dev libegl1-mesa-dev libepoxy-dev libasound2-dev libpulse-dev libva-dev libvdpau-dev libdrm-dev libxpresent-dev libxrandr-dev libxss-dev libxinerama-dev libxcursor-dev libfontconfig1-dev libharfbuzz-dev libfribidi-dev libfreetype-dev libmujs-dev liblcms2-dev liblua5.2-dev zlib1g-dev libpipewire-0.3-dev libdisplay-info-dev libgbm-dev wayland-protocols libxkbcommon-dev libcurl4-openssl-dev libevdev-dev zstd
+          python3 scripts/fetch_linux_libmpv.py --dest libmpv-prefix
+          # mpv.pc also declares private build dependencies; pkgconf resolves
+          # those when checking the package, even for our shared-library link.
+          export PKG_CONFIG_PATH="$(find "$PWD/libmpv-prefix" -type d -name pkgconfig | paste -sd : -)"
+          pkg-config --print-errors --exists mpv libcurl libevdev
+          pkg-config --modversion mpv
+          pkg-config --cflags --libs mpv
+          echo "PKG_CONFIG_PATH=$PKG_CONFIG_PATH" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$(find "$PWD/libmpv-prefix" -name 'libmpv.so*' -printf '%h\n' | sort -u | paste -sd : -):$PWD/libmpv-prefix/lib" >> "$GITHUB_ENV"
+      - name: Resolve and generate
+        run: |
+          flutter pub get --enforce-lockfile
+          dart run build_runner build
+      - name: Test release and navigation contracts
+        if: matrix.platform == 'linux' && matrix.arch == 'x64'
+        run: |
+          dart analyze lib test/ted
+          flutter test test/ted
+      - name: Configure Android release signing
+        if: matrix.platform == 'android' && needs.version.outputs.publish == 'true'
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: python3 scripts/ci_android_signing.py
+      - name: Build and package
+        run: |
+          if [[ "$TARGET_PLATFORM" == android ]]; then
+            # Keep resource evidence in the log if the hosted runner dies.
+            (while true; do date -u; free -m; df -h "$GITHUB_WORKSPACE"; sleep 60; done) &
+            monitor_pid=$!
+            trap 'kill "$monitor_pid" 2>/dev/null || true' EXIT
+          fi
+          python3 scripts/ci_package.py
+      - name: Remove signing material
+        if: always() && matrix.platform == 'android'
+        run: rm -f android/key.properties android/app/release.jks
+      - uses: actions/upload-artifact@v4
+        with:
+          name: teddy-${{ matrix.platform }}-${{ matrix.arch }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+  publish:
+    needs: [version, build]
+    if: needs.version.outputs.publish == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: teddy-*
+          merge-multiple: true
+          path: dist
+      - name: Publish complete release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.version.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+          PROMOTE: ${{ needs.version.outputs.promote }}
+        run: python3 scripts/publish_release.py

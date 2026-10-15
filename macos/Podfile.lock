@@ -1,0 +1,35 @@
+PODS:
+  - auto_updater_macos (0.0.1):
+    - FlutterMacOS
+    - Sparkle
+  - FlutterMacOS (1.0.0)
+  - Sparkle (2.9.0)
+  - universal_gamepad (1.5.8):
+    - FlutterMacOS
+
+DEPENDENCIES:
+  - auto_updater_macos (from `Flutter/ephemeral/.symlinks/plugins/auto_updater_macos/macos`)
+  - FlutterMacOS (from `Flutter/ephemeral`)
+  - universal_gamepad (from `Flutter/ephemeral/.symlinks/plugins/universal_gamepad/macos`)
+
+SPEC REPOS:
+  trunk:
+    - Sparkle
+
+EXTERNAL SOURCES:
+  auto_updater_macos:
+    :path: Flutter/ephemeral/.symlinks/plugins/auto_updater_macos/macos
+  FlutterMacOS:
+    :path: Flutter/ephemeral
+  universal_gamepad:
+    :path: Flutter/ephemeral/.symlinks/plugins/universal_gamepad/macos
+
+SPEC CHECKSUMS:
+  auto_updater_macos: 3e3462c418fe4e731917eacd8d28eef7af84086d
+  FlutterMacOS: c232990155153907050900a2e175c7773903ba4e
+  Sparkle: f4355f9ebbe9b7d932df4980d70f13922ac97b2a
+  universal_gamepad: 9442c31df601729442a41197c1f8bd1ff2254ad0
+
+PODFILE CHECKSUM: d16f5e5d196d1ca9863d7a71d5885cad7ffa7d2d
+
+COCOAPODS: 1.16.2

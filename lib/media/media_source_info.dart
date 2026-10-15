@@ -1,0 +1,466 @@
+import '../i18n/strings.g.dart';
+import '../utils/track_label_builder.dart' show TrackLabel, TrackLabelBuilder;
+import 'media_display_criteria.dart';
+import 'media_part_timeline.dart';
+
+class MediaSourceInfo {
+  final String videoUrl;
+  final List<MediaAudioTrack> audioTracks;
+  final List<MediaSubtitleTrack> subtitleTracks;
+  final List<MediaChapter> chapters;
+  final int? partId;
+  final MediaDisplayCriteria? displayCriteria;
+
+  final String? mediaSourceId;
+
+  /// Effective version/part positions after backend selection and fallback.
+  final int? mediaIndex;
+  final int? partIndex;
+
+  /// Non-null when the selected version is stacked across several files:
+  /// where the open file ([partIndex]) sits on the item's timeline.
+  final MediaPartTimeline? partTimeline;
+
+  final int? defaultAudioStreamIndex;
+  final int? defaultSubtitleStreamIndex;
+
+  final Map<int, TrickplayInfo>? trickplayByWidth;
+
+  /// Display aspect ratio of the video stream (width / height).
+  final double? videoAspectRatio;
+
+  MediaSourceInfo({
+    required this.videoUrl,
+    required this.audioTracks,
+    required this.subtitleTracks,
+    required this.chapters,
+    this.partId,
+    this.displayCriteria,
+    this.mediaSourceId,
+    this.mediaIndex,
+    this.partIndex,
+    this.partTimeline,
+    this.defaultAudioStreamIndex,
+    this.defaultSubtitleStreamIndex,
+    this.trickplayByWidth,
+    this.videoAspectRatio,
+  });
+
+  /// Field-preserving rebuild. Track lists are the only members that the
+  /// playback pipeline rewrites after construction; every other field must
+  /// survive those rewrites untouched.
+  MediaSourceInfo copyWith({List<MediaAudioTrack>? audioTracks, List<MediaSubtitleTrack>? subtitleTracks}) {
+    return MediaSourceInfo(
+      videoUrl: videoUrl,
+      audioTracks: audioTracks ?? this.audioTracks,
+      subtitleTracks: subtitleTracks ?? this.subtitleTracks,
+      chapters: chapters,
+      partId: partId,
+      displayCriteria: displayCriteria,
+      mediaSourceId: mediaSourceId,
+      mediaIndex: mediaIndex,
+      partIndex: partIndex,
+      partTimeline: partTimeline,
+      defaultAudioStreamIndex: defaultAudioStreamIndex,
+      defaultSubtitleStreamIndex: defaultSubtitleStreamIndex,
+      trickplayByWidth: trickplayByWidth,
+      videoAspectRatio: videoAspectRatio,
+    );
+  }
+}
+
+class TrickplayInfo {
+  final int width;
+  final int height;
+  final int tileWidth;
+  final int tileHeight;
+  final int thumbnailCount;
+  final int interval;
+  final int bandwidth;
+
+  const TrickplayInfo({
+    required this.width,
+    required this.height,
+    required this.tileWidth,
+    required this.tileHeight,
+    required this.thumbnailCount,
+    required this.interval,
+    required this.bandwidth,
+  });
+}
+
+/// Shared fallback-index math for [MediaAudioTrack] and [MediaSubtitleTrack]
+/// labels; the label content itself is built by [TrackLabelBuilder].
+mixin _TrackLabelMixin {
+  int get id;
+  int? get index;
+
+  int get _fallbackLabelIndex {
+    final streamIndex = index ?? id;
+    return streamIndex > 0 ? streamIndex - 1 : 0;
+  }
+}
+
+class MediaAudioTrack with _TrackLabelMixin {
+  @override
+  final int id;
+  @override
+  final int? index;
+  final String? codec;
+  final String? language;
+  final String? languageCode;
+  final String? title;
+  final String? displayTitle;
+  final int? channels;
+  final bool selected;
+
+  /// Container fallback, independent of the server/user-selected row.
+  final bool isDefault;
+  final bool external;
+
+  MediaAudioTrack({
+    required this.id,
+    this.index,
+    this.codec,
+    this.language,
+    this.languageCode,
+    this.title,
+    this.displayTitle,
+    this.channels,
+    required this.selected,
+    this.isDefault = false,
+    this.external = false,
+  });
+
+  bool get isExternal => external;
+
+  /// Rebuild with a different server-selected flag.
+  MediaAudioTrack withSelected(bool selected) {
+    return MediaAudioTrack(
+      id: id,
+      index: index,
+      codec: codec,
+      language: language,
+      languageCode: languageCode,
+      title: title,
+      displayTitle: displayTitle,
+      channels: channels,
+      selected: selected,
+      isDefault: isDefault,
+      external: external,
+    );
+  }
+
+  TrackLabel get label {
+    return TrackLabelBuilder.audioLabel(
+      title: title,
+      language: language,
+      languageCode: languageCode,
+      codec: codec,
+      channels: channels,
+      displayTitle: displayTitle,
+      index: _fallbackLabelIndex,
+    );
+  }
+}
+
+class MediaSubtitleTrack with _TrackLabelMixin {
+  @override
+  final int id;
+  @override
+  final int? index;
+  final String? codec;
+  final String? language;
+  final String? languageCode;
+  final String? title;
+  final String? displayTitle;
+  final bool selected;
+  final bool forced;
+  final String? key;
+  final bool external;
+  final bool usesExternalDelivery;
+
+  MediaSubtitleTrack({
+    required this.id,
+    this.index,
+    this.codec,
+    this.language,
+    this.languageCode,
+    this.title,
+    this.displayTitle,
+    required this.selected,
+    required this.forced,
+    this.key,
+    this.external = false,
+    this.usesExternalDelivery = false,
+  });
+
+  TrackLabel get label {
+    return labelForIndex(_fallbackLabelIndex);
+  }
+
+  TrackLabel labelForIndex(int visibleIndex) {
+    return TrackLabelBuilder.subtitleLabel(
+      title: title,
+      language: language,
+      languageCode: languageCode,
+      codec: codec,
+      forced: forced,
+      displayTitle: displayTitle,
+      index: visibleIndex,
+    );
+  }
+
+  /// Returns true if this subtitle track is an external file (sidecar subtitle).
+  /// Some backends provide a direct key/URL, others require constructing one
+  /// from stream metadata.
+  bool get isExternalFile => external;
+
+  bool get isExternal => external || usesExternalDelivery || (key != null && key!.isNotEmpty);
+
+  /// Rebuild with a different server-selected flag.
+  MediaSubtitleTrack withSelected(bool selected) => _rebuild(selected: selected);
+
+  /// Rebuild without the sidecar identity fields ([key] and
+  /// [usesExternalDelivery]).
+  ///
+  /// Whether a row has sidecar identity is a per-playback fact that only the
+  /// backend service layer can establish; this just applies that decision.
+  /// [external] is left untouched for the caller to interpret.
+  MediaSubtitleTrack withoutSidecarIdentity() =>
+      key == null && !usesExternalDelivery ? this : _rebuild(dropSidecarIdentity: true);
+
+  MediaSubtitleTrack _rebuild({bool? selected, bool dropSidecarIdentity = false}) {
+    return MediaSubtitleTrack(
+      id: id,
+      index: index,
+      codec: codec,
+      language: language,
+      languageCode: languageCode,
+      title: title,
+      displayTitle: displayTitle,
+      selected: selected ?? this.selected,
+      forced: forced,
+      key: dropSidecarIdentity ? null : key,
+      external: external,
+      usesExternalDelivery: dropSidecarIdentity ? false : usesExternalDelivery,
+    );
+  }
+}
+
+class MediaChapter {
+  final int id;
+  final int? index;
+  final int? startTimeOffset;
+  final int? endTimeOffset;
+  final String? title;
+  final String? thumb;
+
+  MediaChapter({required this.id, this.index, this.startTimeOffset, this.endTimeOffset, this.title, this.thumb});
+
+  static List<MediaChapter> backfillEndOffsets(List<MediaChapter> chapters, {int? runtimeMs}) {
+    for (var i = 0; i < chapters.length - 1; i++) {
+      final c = chapters[i];
+      if (c.endTimeOffset != null) continue;
+      chapters[i] = MediaChapter(
+        id: c.id,
+        index: c.index,
+        startTimeOffset: c.startTimeOffset,
+        endTimeOffset: chapters[i + 1].startTimeOffset,
+        title: c.title,
+        thumb: c.thumb,
+      );
+    }
+    if (runtimeMs != null && chapters.isNotEmpty) {
+      final last = chapters.last;
+      final start = last.startTimeOffset;
+      if (last.endTimeOffset == null && start != null && runtimeMs > start) {
+        chapters[chapters.length - 1] = MediaChapter(
+          id: last.id,
+          index: last.index,
+          startTimeOffset: start,
+          endTimeOffset: runtimeMs,
+          title: last.title,
+          thumb: last.thumb,
+        );
+      }
+    }
+    return chapters;
+  }
+
+  String get label => title ?? t.common.chapterNumber(number: (index ?? 0) + 1);
+
+  Duration get startTime => Duration(milliseconds: startTimeOffset ?? 0);
+  Duration? get endTime => endTimeOffset != null ? Duration(milliseconds: endTimeOffset!) : null;
+
+  /// Find the chapter index containing [position]. Returns null if none match.
+  /// A chapter's end defaults to the next chapter's start when [endTimeOffset]
+  /// is missing; the final chapter without an end extends to infinity.
+  static int? indexAtPosition(Duration position, List<MediaChapter> chapters) {
+    final positionMs = position.inMilliseconds;
+    for (int i = 0; i < chapters.length; i++) {
+      final chapter = chapters[i];
+      final startMs = chapter.startTimeOffset ?? 0;
+      final endMs =
+          chapter.endTimeOffset ??
+          (i < chapters.length - 1 ? chapters[i + 1].startTimeOffset ?? 0 : double.maxFinite.toInt());
+      if (positionMs >= startMs && positionMs < endMs) return i;
+    }
+    return null;
+  }
+
+  /// Find the chapter targeted by next/previous traversal. Previous traversal
+  /// restarts the current chapter only after [previousRestartThreshold]; before
+  /// that it selects an earlier chapter.
+  static int? seekTargetIndex(
+    Duration position,
+    List<MediaChapter> chapters, {
+    required bool forward,
+    Duration previousRestartThreshold = const Duration(seconds: 3),
+  }) {
+    final positionMs = position.inMilliseconds;
+    if (forward) {
+      for (int i = 0; i < chapters.length; i++) {
+        if ((chapters[i].startTimeOffset ?? 0) > positionMs) return i;
+      }
+      return null;
+    }
+
+    final thresholdMs = previousRestartThreshold.inMilliseconds;
+    for (int i = chapters.length - 1; i >= 0; i--) {
+      if (positionMs > (chapters[i].startTimeOffset ?? 0) + thresholdMs) return i;
+    }
+    return null;
+  }
+}
+
+class MediaMarker {
+  final int id;
+  final String type;
+  final int startTimeOffset;
+  final int endTimeOffset;
+
+  MediaMarker({required this.id, required this.type, required this.startTimeOffset, required this.endTimeOffset});
+
+  Duration get startTime => Duration(milliseconds: startTimeOffset);
+  Duration get endTime => Duration(milliseconds: endTimeOffset);
+
+  bool get isCredits => type == 'credits';
+
+  bool containsPosition(Duration position) {
+    final posMs = position.inMilliseconds;
+    return posMs >= startTimeOffset && posMs < endTimeOffset;
+  }
+}
+
+/// Combined chapters and markers fetched in a single API call
+class PlaybackExtras {
+  final List<MediaChapter> chapters;
+  final List<MediaMarker> markers;
+
+  PlaybackExtras({required this.chapters, required this.markers});
+
+  /// Whether any marker is a credits marker (detected or chapter-derived).
+  bool get hasCreditsMarkers => markers.any((marker) => marker.isCredits);
+
+  /// A copy with every credits marker removed; chapters and the remaining
+  /// markers are kept. Used when the server admin explicitly disabled
+  /// credits detection for the item's show/movie.
+  PlaybackExtras withoutCreditsMarkers() =>
+      PlaybackExtras(chapters: chapters, markers: markers.where((marker) => !marker.isCredits).toList());
+
+  static String? _classifyChapterTitle(String title, RegExp introPattern, RegExp creditsPattern) {
+    if (introPattern.hasMatch(title)) return 'intro';
+    if (creditsPattern.hasMatch(title)) return 'credits';
+    return null;
+  }
+
+  /// Compiles [pattern], falling back to [defaultPattern] when it is null or
+  /// blank: a blank stored/imported pattern would compile to a regex that
+  /// matches every chapter title, classifying every chapter as a marker.
+  static RegExp _patternOrDefault(String? pattern, String defaultPattern) {
+    final source = pattern == null || pattern.trim().isEmpty ? defaultPattern : pattern;
+    return RegExp(source, caseSensitive: false);
+  }
+
+  /// Longest chapter that may become a chapter-derived intro marker.
+  ///
+  /// Detected intros (Plex, Intro Skipper) fall well inside two minutes; a
+  /// movie's first chapter titled "Opening Credits" or "Introduction" runs
+  /// five to ten minutes of actual picture, and skipping it skips the film
+  /// (#2235). Applies only to markers minted here from chapter titles, never
+  /// to server-supplied markers, and never to credits, which are legitimately
+  /// long on movies.
+  static const maxChapterIntroDuration = Duration(minutes: 3);
+
+  /// Returns [PlaybackExtras] using real markers when available, filling any
+  /// missing marker types from chapter titles matching intro/credits patterns.
+  /// [forceChapterFallback] prefers chapter-derived markers for any type they
+  /// provide. When real markers exist, reclassifies markers with unknown types
+  /// against the patterns so non-standard type strings get recognized.
+  /// Chapter-derived intros longer than [maxChapterIntroDuration] are dropped.
+  factory PlaybackExtras.withChapterFallback({
+    required List<MediaChapter> chapters,
+    required List<MediaMarker> markers,
+    String? introPatternStr,
+    String? creditsPatternStr,
+    bool forceChapterFallback = false,
+  }) {
+    final introPattern = _patternOrDefault(
+      introPatternStr,
+      r'(?:^|\b)(?:intro(?:duction)?|opening)(?:\b|$)|^op(?:\s?\d+)?$',
+    );
+    final creditsPattern = _patternOrDefault(
+      creditsPatternStr,
+      r'(?:^|\b)(?:outro|closing|credits?|ending)(?:\b|$)|^ed(?:\s?\d+)?$',
+    );
+
+    final synthetic = <MediaMarker>[];
+    for (var i = 0; i < chapters.length; i++) {
+      final ch = chapters[i];
+      final title = ch.title;
+      if (title == null || title.isEmpty) continue;
+
+      final type = _classifyChapterTitle(title, introPattern, creditsPattern);
+      if (type == null) continue;
+
+      final start = ch.startTimeOffset;
+      if (start == null) continue;
+
+      final end = ch.endTimeOffset ?? (i + 1 < chapters.length ? chapters[i + 1].startTimeOffset : null);
+      if (end == null) continue;
+      if (type == 'intro' && end - start > maxChapterIntroDuration.inMilliseconds) continue;
+
+      synthetic.add(MediaMarker(id: ch.id, type: type, startTimeOffset: start, endTimeOffset: end));
+    }
+
+    if (markers.isNotEmpty) {
+      // Reclassify markers with non-standard types against the patterns.
+      final reclassified = markers.map((m) {
+        if (m.type == 'intro' || m.type == 'credits') return m;
+        final newType = _classifyChapterTitle(m.type, introPattern, creditsPattern);
+        if (newType != null) {
+          return MediaMarker(
+            id: m.id,
+            type: newType,
+            startTimeOffset: m.startTimeOffset,
+            endTimeOffset: m.endTimeOffset,
+          );
+        }
+        return m;
+      }).toList();
+
+      if (synthetic.isEmpty) return PlaybackExtras(chapters: chapters, markers: reclassified);
+
+      final syntheticTypes = synthetic.map((m) => m.type).toSet();
+      final nativeTypes = reclassified.map((m) => m.type).toSet();
+      final merged = forceChapterFallback
+          ? <MediaMarker>[...reclassified.where((m) => !syntheticTypes.contains(m.type)), ...synthetic]
+          : <MediaMarker>[...reclassified, ...synthetic.where((m) => !nativeTypes.contains(m.type))];
+      merged.sort((a, b) => a.startTimeOffset.compareTo(b.startTimeOffset));
+      return PlaybackExtras(chapters: chapters, markers: merged);
+    }
+
+    return PlaybackExtras(chapters: chapters, markers: synthetic);
+  }
+}

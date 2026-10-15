@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Plezy
+Comment=A native TED client for desktop and mobile
+Exec=plezy
+Icon=plezy
+Terminal=false
+Categories=AudioVideo;Video;Player;
+Keywords=ted;media;streaming;video;
+StartupWMClass=plezy

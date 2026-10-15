@@ -1,0 +1,54 @@
+{
+  "$schema": "https://raw.githubusercontent.com/jetify-com/devbox/0.18.1/.schema/devbox.schema.json",
+  "packages": {
+    "go":            "1.27",
+    "gopls":         "latest",
+    "golangci-lint": "latest",
+    "delve":         "latest",
+    "air":           "latest",
+    "nodejs": {
+      "version":        "24",
+      "disable_plugin": true
+    },
+    "postgresql": {
+      "version":        "18",
+      "disable_plugin": true
+    },
+    "ffmpeg":         "latest",
+    "docker-client":  "latest",
+    "docker-compose": "latest",
+    "docker-buildx":  "latest",
+    "colima": {
+      "version": "latest",
+      "platforms": [
+        "aarch64-darwin",
+        "x86_64-darwin"
+      ]
+    },
+    "git":     "latest",
+    "curl":    "latest",
+    "jq":      "latest",
+    "flutter": "3.47.0-sdk-links",
+    "cocoapods": {
+      "version": "1.16.2",
+      "platforms": [
+        "aarch64-darwin",
+        "x86_64-darwin"
+      ]
+    },
+    "rsync": {
+      "version": "3.4.4",
+      "platforms": [
+        "aarch64-darwin",
+        "x86_64-darwin"
+      ]
+    },
+    "jdk": "21"
+  },
+  "shell": {
+    "scripts": {
+      "test":        "bash scripts/check-teddy.sh",
+      "build-macos": "bash scripts/build-teddy-macos.sh"
+    }
+  }
+}

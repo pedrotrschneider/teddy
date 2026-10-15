@@ -1,0 +1,869 @@
+import 'dart:async';
+import 'dart:io';
+import 'dart:math' as math;
+import 'dart:ui';
+
+import 'package:flutter/material.dart';
+import 'package:material_symbols_icons/symbols.dart';
+import 'package:plezy/widgets/app_icon.dart';
+
+import '../media/media_server_client.dart';
+import '../services/device_performance.dart';
+import '../utils/app_logger.dart';
+import '../utils/media_image_helper.dart';
+import '../utils/obfuscation_utils.dart';
+import '../utils/tone_mapped_logo_image.dart';
+
+/// Tracks recent image load failures to log a periodic summary instead of
+/// spamming per-image. Resets after [_logInterval] so recurring issues
+/// remain visible.
+int _imageFailureCount = 0;
+DateTime _lastFailureLog = DateTime.now();
+const _logInterval = Duration(seconds: 10);
+
+/// Passed to [OptimizedMediaImage.errorWidget] when no URL could be built for
+/// the image *at this build*, as opposed to a load that was attempted and
+/// failed. Reaching [OptimizedMediaImage._buildCachedImage] already implies a
+/// non-empty [OptimizedMediaImage.imagePath], and the only remaining way
+/// [MediaImageHelper.getOptimizedImageUrl] returns '' for one is a null
+/// [MediaServerClient] (offline mode, profile switch, server reconnect), so the
+/// path is not known-bad and callers that memoize failures MUST NOT record it.
+class UnresolvedImageUrl implements Exception {
+  const UnresolvedImageUrl(this.imagePath);
+  final String imagePath;
+  @override
+  String toString() => 'No image URL could be built for $imagePath';
+}
+
+Widget blurArtwork(Widget child, {double sigma = 30, bool clip = true}) {
+  if (!kBlurArtwork) return child;
+  final filtered = ImageFiltered(
+    imageFilter: ImageFilter.blur(sigmaX: sigma, sigmaY: sigma),
+    child: child,
+  );
+  return clip ? ClipRect(child: filtered) : filtered;
+}
+
+Widget _withArtworkDim(Animation<double>? dim, Widget Function(Color? tint) builder) {
+  if (dim == null) return builder(null);
+  return AnimatedBuilder(
+    animation: dim,
+    builder: (context, _) {
+      final amount = dim.value.clamp(0.0, 1.0);
+      return builder(amount == 0 ? null : Colors.black.withValues(alpha: amount));
+    },
+  );
+}
+
+class OptimizedMediaImage extends StatelessWidget {
+  final MediaServerClient? client;
+  final String? imagePath;
+  final double? width;
+  final double? height;
+  final BoxFit fit;
+  final Widget Function(BuildContext, String)? placeholder;
+  final Widget Function(BuildContext, String, dynamic)? errorWidget;
+  final Duration fadeInDuration;
+  final Alignment alignment;
+  final IconData? fallbackIcon;
+  final ImageType imageType;
+  final String? localFilePath;
+  final bool cacheMissingLocalFile;
+
+  /// Black tint applied at image paint time without an opacity save layer.
+  final Animation<double>? artworkDim;
+
+  /// Recolors light-toned logo artwork toward this theme foreground so it
+  /// stays legible on light surfaces (see [ToneMappedLogoImage]). Applies to
+  /// both the network and local-file decode paths.
+  final Color? logoToneTarget;
+
+  /// Forwards [ToneMappedLogoImage.remapMixed]: heroes pass false so marks
+  /// with significant color render untouched; the guide's channel cells keep
+  /// the default and remap mixed marks too.
+  final bool logoToneRemapMixed;
+
+  const OptimizedMediaImage._({
+    super.key,
+    this.client,
+    required this.imagePath,
+    this.width,
+    this.height,
+    this.fit = BoxFit.cover,
+    this.placeholder,
+    this.errorWidget,
+    this.fadeInDuration = const Duration(milliseconds: 300),
+    this.alignment = Alignment.center,
+    this.fallbackIcon,
+    this.imageType = ImageType.poster,
+    this.localFilePath,
+    this.artworkDim,
+    this.logoToneTarget,
+    this.logoToneRemapMixed = true,
+    this.cacheMissingLocalFile = false,
+  });
+
+  /// Generic constructor for optimized images.
+  const factory OptimizedMediaImage({
+    Key? key,
+    MediaServerClient? client,
+    required String? imagePath,
+    double? width,
+    double? height,
+    BoxFit fit,
+    Widget Function(BuildContext, String)? placeholder,
+    Widget Function(BuildContext, String, dynamic)? errorWidget,
+    Duration fadeInDuration,
+    Alignment alignment,
+    IconData? fallbackIcon,
+    ImageType imageType,
+    String? localFilePath,
+    Animation<double>? artworkDim,
+    Color? logoToneTarget,
+    bool logoToneRemapMixed,
+    bool cacheMissingLocalFile,
+  }) = OptimizedMediaImage._;
+
+  /// Named constructor for poster images with default fallback icon.
+  const OptimizedMediaImage.poster({
+    Key? key,
+    MediaServerClient? client,
+    required String? imagePath,
+    double? width,
+    double? height,
+    BoxFit fit = BoxFit.cover,
+    Widget Function(BuildContext, String)? placeholder,
+    Widget Function(BuildContext, String, dynamic)? errorWidget,
+    Duration fadeInDuration = const Duration(milliseconds: 300),
+    Alignment alignment = Alignment.center,
+    IconData? fallbackIcon,
+    String? localFilePath,
+    Animation<double>? artworkDim,
+  }) : this._(
+         key: key,
+         client: client,
+         imagePath: imagePath,
+         width: width,
+         height: height,
+         fit: fit,
+         placeholder: placeholder,
+         errorWidget: errorWidget,
+         fadeInDuration: fadeInDuration,
+         alignment: alignment,
+         fallbackIcon: fallbackIcon ?? Symbols.movie_rounded,
+         imageType: ImageType.poster,
+         localFilePath: localFilePath,
+         artworkDim: artworkDim,
+       );
+
+  /// Named constructor for episode thumbnails.
+  const OptimizedMediaImage.thumb({
+    Key? key,
+    MediaServerClient? client,
+    required String? imagePath,
+    double? width,
+    double? height,
+    BoxFit fit = BoxFit.cover,
+    Widget Function(BuildContext, String)? placeholder,
+    Widget Function(BuildContext, String, dynamic)? errorWidget,
+    Duration fadeInDuration = const Duration(milliseconds: 300),
+    Alignment alignment = Alignment.center,
+    IconData? fallbackIcon,
+    String? localFilePath,
+    Color? logoToneTarget,
+    bool logoToneRemapMixed = true,
+    Animation<double>? artworkDim,
+  }) : this._(
+         key: key,
+         client: client,
+         imagePath: imagePath,
+         width: width,
+         height: height,
+         fit: fit,
+         placeholder: placeholder,
+         errorWidget: errorWidget,
+         fadeInDuration: fadeInDuration,
+         alignment: alignment,
+         fallbackIcon: fallbackIcon ?? Symbols.video_library_rounded,
+         imageType: ImageType.thumb,
+         localFilePath: localFilePath,
+         logoToneTarget: logoToneTarget,
+         logoToneRemapMixed: logoToneRemapMixed,
+         artworkDim: artworkDim,
+       );
+
+  /// Whether both width and height are explicitly set to finite positive values,
+  /// meaning we can skip the LayoutBuilder.
+  bool get _hasKnownDimensions =>
+      width != null && width!.isFinite && width! > 0 && height != null && height!.isFinite && height! > 0;
+
+  /// Not a constructor parameter: the filter has to follow the fetch density,
+  /// not the call site.
+  FilterQuality _filterQuality(BuildContext context) => MediaImageHelper.artworkFilterQuality(context, imageType);
+
+  @override
+  Widget build(BuildContext context) {
+    final path = localFilePath;
+    if (path == null) {
+      return _buildResolved(context, LocalFileResolution.missing, null);
+    }
+    return ResolvedLocalFile(path: path, cacheMissing: cacheMissingLocalFile, builder: _buildResolved);
+  }
+
+  Widget _buildResolved(BuildContext context, LocalFileResolution resolution, File? localFile) {
+    if (resolution == LocalFileResolution.pending) {
+      return placeholder == null
+          ? _surfacePlaceholder(context)
+          : _buildPlaceholder(context, imagePath ?? localFilePath ?? '');
+    }
+    final hasLocal = resolution == LocalFileResolution.present;
+
+    if (!hasLocal && (imagePath == null || imagePath!.isEmpty)) {
+      if (errorWidget != null) {
+        return errorWidget!(context, localFilePath ?? '', UnresolvedImageUrl(localFilePath ?? imagePath ?? ''));
+      }
+      return _buildFallback(context);
+    }
+
+    if (_hasKnownDimensions) {
+      return blurArtwork(
+        hasLocal
+            ? _buildLocalFileImage(context, localFile!, width!, height!)
+            : _buildCachedImage(context, width!, height!),
+      );
+    }
+
+    return blurArtwork(
+      LayoutBuilder(
+        builder: (context, constraints) {
+          final effectiveWidth = _resolvedDimension(width, constraints.maxWidth, 300.0);
+          final effectiveHeight = _resolvedDimension(height, constraints.maxHeight, 450.0);
+          return hasLocal
+              ? _buildLocalFileImage(context, localFile!, effectiveWidth, effectiveHeight)
+              : _buildCachedImage(context, effectiveWidth, effectiveHeight);
+        },
+      ),
+    );
+  }
+
+  Widget _buildLocalFileImage(BuildContext context, File file, double effectiveWidth, double effectiveHeight) {
+    final pixelRatio = MediaImageHelper.artworkPixelRatio(context, imageType: imageType);
+    final scaledWidth = effectiveWidth * pixelRatio;
+    final scaledHeight = effectiveHeight * pixelRatio;
+    final (memWidth, memHeight) = MediaImageHelper.getMemCacheDimensions(
+      displayWidth: scaledWidth.isFinite && scaledWidth > 0 ? scaledWidth.round() : 0,
+      displayHeight: scaledHeight.isFinite && scaledHeight > 0 ? scaledHeight.round() : 0,
+      imageType: imageType,
+    );
+    final bounded = MediaImageHelper.boundedDecode(FileImage(file), memWidth: memWidth, memHeight: memHeight);
+    final provider = logoToneTarget == null
+        ? bounded
+        : ToneMappedLogoImage(bounded, target: logoToneTarget!, remapMixed: logoToneRemapMixed);
+
+    return _withArtworkDim(
+      artworkDim,
+      (tint) => Image(
+        image: provider,
+        width: width,
+        height: height,
+        // Artwork is decorative: the enclosing card exposes one merged node
+        // with the title, and a per-image node just grows the semantics tree
+        // the TV a11y services make Flutter rebuild every frame.
+        excludeFromSemantics: true,
+        fit: fit,
+        filterQuality: _filterQuality(context),
+        alignment: alignment,
+        color: tint,
+        colorBlendMode: tint == null ? null : BlendMode.srcATop,
+        errorBuilder: (context, error, stackTrace) {
+          if (errorWidget != null) {
+            return errorWidget!(context, file.path, error);
+          }
+          return _buildErrorWidget(context, error);
+        },
+      ),
+    );
+  }
+
+  static double _resolvedDimension(double? explicit, double constraintMax, double fallback) {
+    // Pick the explicit size when it's a finite positive number, otherwise
+    // fall back to the constraint or a sensible default so we don't end up
+    // with NaN/Infinity when rounding to ints for caching.
+    if (explicit == null || explicit.isNaN || explicit.isInfinite || explicit <= 0) {
+      if (constraintMax.isFinite && constraintMax > 0) {
+        return constraintMax;
+      }
+      return fallback;
+    }
+    return explicit;
+  }
+
+  Widget _buildCachedImage(BuildContext context, double effectiveWidth, double effectiveHeight) {
+    final pixelRatio = MediaImageHelper.artworkPixelRatio(context, imageType: imageType);
+
+    final imageUrl = MediaImageHelper.getOptimizedImageUrl(
+      client: client,
+      thumbPath: imagePath,
+      maxWidth: effectiveWidth,
+      maxHeight: effectiveHeight,
+      pixelRatio: pixelRatio,
+      imageType: imageType,
+    );
+
+    if (imageUrl.isEmpty) {
+      // An unresolvable URL (no client, offline, suppressed transcode) is a
+      // load failure from the caller's point of view, so honour its own
+      // failure UI rather than the generic broken-image tile.
+      if (errorWidget != null) {
+        return errorWidget!(context, imagePath ?? '', UnresolvedImageUrl(imagePath ?? ''));
+      }
+      return _buildFallback(context);
+    }
+
+    final scaledWidth = effectiveWidth * pixelRatio;
+    final scaledHeight = effectiveHeight * pixelRatio;
+    final (memWidth, memHeight) = MediaImageHelper.getMemCacheDimensions(
+      displayWidth: scaledWidth.isFinite && scaledWidth > 0 ? scaledWidth.round() : 0,
+      displayHeight: scaledHeight.isFinite && scaledHeight > 0 ? scaledHeight.round() : 0,
+      imageType: imageType,
+    );
+
+    final resizedProvider = MediaImageHelper.serverArtworkProvider(
+      imageUrl: imageUrl,
+      memWidth: memWidth,
+      memHeight: memHeight,
+      logoToneTarget: logoToneTarget,
+      logoToneRemapMixed: logoToneRemapMixed,
+    );
+
+    return _FadeInNetworkImage(
+      imageIdentity: imageUrl,
+      image: resizedProvider,
+      width: width,
+      height: height,
+      fit: fit,
+      filterQuality: _filterQuality(context),
+      alignment: alignment,
+      duration: fadeInDuration,
+      placeholderBuilder: (context) => _buildPlaceholder(context, imageUrl),
+      errorBuilder: _networkErrorBuilder(imageUrl),
+      artworkDim: artworkDim,
+      fade: !DevicePerformance.isReduced,
+      evictFailed: () => MediaImageHelper.evictFailedServerArtwork(imageUrl, resizedProvider),
+    );
+  }
+
+  ImageErrorWidgetBuilder _networkErrorBuilder(String imageUrl) {
+    return (context, error, stackTrace) {
+      _imageFailureCount++;
+      final now = DateTime.now();
+      if (now.difference(_lastFailureLog) >= _logInterval) {
+        appLogger.w('Image load failed ($_imageFailureCount since last log): ${error.runtimeType}');
+        _imageFailureCount = 0;
+        _lastFailureLog = now;
+      }
+      if (errorWidget != null) {
+        return errorWidget!(context, imageUrl, error);
+      }
+      return _buildErrorWidget(context, error);
+    };
+  }
+
+  Widget _surfacePlaceholder(BuildContext context, {IconData? icon, Color? iconColor, bool fillParent = false}) {
+    final theme = Theme.of(context).colorScheme;
+    final baseSurfaceColor = theme.surfaceContainerHighest;
+    final baseIconColor = iconColor ?? theme.onSurfaceVariant;
+    return _withArtworkDim(
+      artworkDim,
+      (tint) => Container(
+        width: fillParent ? null : width,
+        height: fillParent ? null : height,
+        color: tint == null ? baseSurfaceColor : Color.alphaBlend(tint, baseSurfaceColor),
+        child: icon == null
+            ? null
+            : Center(
+                child: AppIcon(
+                  icon,
+                  fill: 1,
+                  size: 40,
+                  color: tint == null ? baseIconColor : Color.alphaBlend(tint, baseIconColor),
+                ),
+              ),
+      ),
+    );
+  }
+
+  Widget _buildPlaceholder(BuildContext context, String imageUrl) {
+    final customPlaceholder = placeholder?.call(context, imageUrl);
+    if (customPlaceholder == null) {
+      return _surfacePlaceholder(context, icon: fallbackIcon, iconColor: Colors.white54);
+    }
+    if (artworkDim == null) return customPlaceholder;
+    return _withArtworkDim(
+      artworkDim,
+      (tint) => Stack(
+        fit: StackFit.passthrough,
+        children: [
+          customPlaceholder,
+          if (tint != null)
+            Positioned.fill(
+              child: IgnorePointer(child: ColoredBox(color: tint)),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorWidget(BuildContext context, dynamic _) => _surfacePlaceholder(
+    context,
+    icon: fallbackIcon ?? Symbols.broken_image_rounded,
+    fillParent: !_hasKnownDimensions,
+  );
+
+  Widget _buildFallback(BuildContext context) =>
+      _surfacePlaceholder(context, icon: fallbackIcon ?? Symbols.image_not_supported_rounded);
+}
+
+/// Clear-logo artwork for hero and detail headers.
+///
+/// Logos are the one artwork type whose source aspect never matches its slot,
+/// so the decode has to preserve the source ratio: [OptimizedMediaImage] goes
+/// through [MediaImageHelper.boundedDecode], which bounds both axes under
+/// `ResizeImagePolicy.fit`. Handing both mem-cache dimensions to a raw
+/// `CachedNetworkImage` instead decodes under `ResizeImagePolicy.exact`, which
+/// pins the logo to whatever ratio those two bounds happen to have.
+///
+/// Plex serves logos as fitting transcodes (`minSize=0&upscale=0`), so the
+/// image comes back inside the requested box with aspect intact (a 4313×1035
+/// logo asked for at 1200×360 comes back 1200×288). `exact` ignores the
+/// source ratio and decodes to whatever ratio the two bounds happen to have:
+/// on a phone at DPR 3 the 400×120 hero slot decodes to exactly 1000×360 —
+/// the width capped by [MediaImageHelper.getMemCacheDimensions] — turning a
+/// 4.17∶1 logo into 2.78∶1.
+///
+/// [fallbackBuilder] renders the title in place of the logo when the path is
+/// missing, the URL can't be built, or the image fails to load. The title
+/// gets [fallbackWidth] — see [fallbackWidthFor] — not the logo's [width]:
+/// that cap keeps a wide mark from filling the hero under `BoxFit.contain`,
+/// but a title confined to it wraps and ellipsizes long before the hero runs
+/// out of room (#1796). Both share [height], so a caller's hero height budget
+/// is the same whichever renders.
+class ClearLogoImage extends StatelessWidget {
+  const ClearLogoImage({
+    super.key,
+    required this.client,
+    required this.logoPath,
+    required this.width,
+    required this.height,
+    required this.fallbackWidth,
+    required this.fallbackBuilder,
+    this.alignment = Alignment.centerLeft,
+    this.fadeInDuration = const Duration(milliseconds: 300),
+    this.logoToneTarget,
+  });
+
+  final MediaServerClient? client;
+  final String? logoPath;
+
+  /// Logo slot; the mark is contained within [width] × [height].
+  final double width;
+  final double height;
+
+  /// Title slot width, at least [width]; see [fallbackWidthFor].
+  final double fallbackWidth;
+  final WidgetBuilder fallbackBuilder;
+
+  /// Width of the title slot for a hero whose logo slot is [logoWidth] wide
+  /// inside an [available]-wide content column: twice the logo, capped to
+  /// the column. Confined to the logo slot a title ellipsizes early (#1796);
+  /// given the whole column it runs one 1400px line across a desktop hero,
+  /// where a two-line block is what reads as a title. Twice the logo keeps
+  /// it a block; [FittingTitleText] shrinks whatever still does not fit.
+  static double fallbackWidthFor({required double logoWidth, required double available}) =>
+      math.min(available, 2 * logoWidth);
+
+  /// Positions the logo slot within the title slot and the mark within it.
+  final Alignment alignment;
+  final Duration fadeInDuration;
+
+  /// See [OptimizedMediaImage.logoToneTarget]; heroes pass a target when the
+  /// backdrop behind the logo is scrimmed toward a light background.
+  final Color? logoToneTarget;
+
+  @override
+  Widget build(BuildContext context) {
+    final path = logoPath;
+    return SizedBox(
+      width: fallbackWidth,
+      height: height,
+      child: path == null || path.isEmpty
+          ? fallbackBuilder(context)
+          : Align(
+              alignment: alignment,
+              child: OptimizedMediaImage(
+                client: client,
+                imagePath: path,
+                width: width,
+                height: height,
+                fit: BoxFit.contain,
+                alignment: alignment,
+                imageType: ImageType.heroLogo,
+                fadeInDuration: fadeInDuration,
+                logoToneTarget: logoToneTarget,
+                // Clear logos render on heroes where a mark's color is part of
+                // its identity: mixed-tone marks stay untouched.
+                logoToneRemapMixed: false,
+                placeholder: (context, _) => const SizedBox.shrink(),
+                // Replaces the image under Align's loose constraints, so it can
+                // take the whole title slot rather than the logo's.
+                errorWidget: (context, _, _) => SizedBox.expand(child: fallbackBuilder(context)),
+              ),
+            ),
+    );
+  }
+}
+
+/// Fades a network image in by animating the image paint's alpha
+/// (`Image.opacity` → `RawImage`), not by wrapping it in an opacity widget:
+/// a widget-opacity fade is a tile-sized saveLayer per in-flight image, and
+/// grid scrolling runs many of them concurrently — a real GPU cost on the
+/// weak GLES devices most Android TVs are. The opaque placeholder sits below
+/// in a Stack until the fade completes, so the visual result matches the
+/// AnimatedSwitcher cross-fade this replaces.
+class _FadeInNetworkImage extends StatefulWidget {
+  const _FadeInNetworkImage({
+    required this.imageIdentity,
+    required this.image,
+    required this.width,
+    required this.height,
+    required this.fit,
+    required this.filterQuality,
+    required this.alignment,
+    required this.duration,
+    required this.placeholderBuilder,
+    required this.errorBuilder,
+    required this.artworkDim,
+    required this.fade,
+    required this.evictFailed,
+  });
+
+  final ImageProvider image;
+  final String imageIdentity;
+  final double? width;
+  final double? height;
+  final BoxFit fit;
+  final FilterQuality filterQuality;
+  final Alignment alignment;
+  final Duration duration;
+  final WidgetBuilder placeholderBuilder;
+  final ImageErrorWidgetBuilder errorBuilder;
+  final Animation<double>? artworkDim;
+  final bool fade;
+  final Future<void> Function() evictFailed;
+
+  @override
+  State<_FadeInNetworkImage> createState() => _FadeInNetworkImageState();
+}
+
+class _FadeInNetworkImageState extends State<_FadeInNetworkImage>
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+  // Starts fully visible so synchronously-available (memory-cached) images
+  // paint immediately; dropped to 0 only once we know the load is async.
+  late final AnimationController _opacity = AnimationController(vsync: this, duration: widget.duration, value: 1);
+  bool _sawFirstFrame = false;
+  bool _placeholderVisible = false;
+  Timer? _retryTimer;
+  int _attempt = 0, _generation = 0, _reload = 0, _imageEpoch = 0;
+  bool _failed = false, _enabled = true, _resumed = true;
+  Future<void>? _eviction;
+  Object? _lastError;
+  StackTrace? _lastErrorStack;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _resumed =
+        WidgetsBinding.instance.lifecycleState == null ||
+        WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed;
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _enabled = TickerMode.valuesOf(context).enabled;
+    _scheduleRetry();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _resumed = state == AppLifecycleState.resumed;
+    _scheduleRetry();
+  }
+
+  void _scheduleRetry() {
+    if (!_enabled || !_resumed) {
+      _retryTimer?.cancel();
+      _retryTimer = null;
+      return;
+    }
+    if (!_failed || _retryTimer != null) return;
+    // Keep trying while displayed, without turning a missing poster or an
+    // outage into a tight request loop. Shared artwork concurrency still
+    // bounds downloads. Successful frames stop the timer entirely.
+    final seconds = math.min(60, 2 * (1 << math.min(_attempt, 5)));
+    _retryTimer = Timer(Duration(seconds: seconds), _retry);
+  }
+
+  Future<void> _retry() async {
+    final generation = _generation;
+    await _eviction;
+    if (!mounted || generation != _generation) return;
+    _retryTimer = null;
+    if (!_enabled || !_resumed || !_failed) return;
+    setState(() {
+      _attempt++;
+      _reload++;
+      _failed = false;
+      _sawFirstFrame = false;
+      _placeholderVisible = false;
+      _opacity.value = 1;
+    });
+  }
+
+  Widget _error(BuildContext context, Object error, StackTrace? stack) {
+    if (!_failed && !_sawFirstFrame) {
+      _failed = true;
+      _lastError = error;
+      _lastErrorStack = stack;
+      // Clear the failed entry before waiting, so decode failures recover as
+      // well as HTTP failures. Keep successful cached frames intact.
+      _eviction = widget.evictFailed().catchError((Object _) {});
+      _scheduleRetry();
+    }
+    return widget.errorBuilder(context, error, stack);
+  }
+
+  void _loaded() {
+    _failed = false;
+    _attempt = 0;
+    _retryTimer?.cancel();
+    _retryTimer = null;
+  }
+
+  @override
+  void didUpdateWidget(covariant _FadeInNetworkImage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.image != oldWidget.image) {
+      final retainFrame = widget.imageIdentity == oldWidget.imageIdentity && _sawFirstFrame && !_failed;
+      _generation++;
+      if (!retainFrame) _imageEpoch++;
+      _retryTimer?.cancel();
+      _retryTimer = null;
+      _eviction = null;
+      _failed = false;
+      _lastError = null;
+      _lastErrorStack = null;
+      _attempt = 0;
+      // New stream: rearm so an async swap fades again (a memory-cached swap
+      // stays at full opacity via the wasSynchronouslyLoaded path).
+      // A sidebar/window resize changes only the decode bounds. Keep its
+      // decoded frame while the same artwork resolves at its new size.
+      _sawFirstFrame = retainFrame;
+      _placeholderVisible = false;
+      _opacity.value = 1;
+    }
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _retryTimer?.cancel();
+    _opacity.dispose();
+    super.dispose();
+  }
+
+  void _startFade() {
+    _sawFirstFrame = true;
+    _opacity.forward().whenComplete(() {
+      if (mounted && _placeholderVisible) setState(() => _placeholderVisible = false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Image re-resolves its provider when inherited dependencies change.
+    // Hold the failed presentation until our retry is due, so focus/theme or
+    // TickerMode changes cannot bypass backoff or restart a hidden download.
+    if (_failed && _lastError != null) {
+      return widget.errorBuilder(context, _lastError!, _lastErrorStack);
+    }
+    return _withArtworkDim(
+      widget.artworkDim,
+      (tint) => Image(
+        key: ValueKey((_imageEpoch, _reload)),
+        image: widget.image,
+        gaplessPlayback: true,
+        width: widget.width,
+        height: widget.height,
+        // Decorative — see OptimizedMediaImage.
+        excludeFromSemantics: true,
+        fit: widget.fit,
+        filterQuality: widget.filterQuality,
+        alignment: widget.alignment,
+        color: tint,
+        colorBlendMode: tint == null ? null : BlendMode.srcATop,
+        opacity: widget.fade ? _opacity : null,
+        errorBuilder: _error,
+        frameBuilder: (context, child, frame, wasSynchronouslyLoaded) {
+          if (wasSynchronouslyLoaded || frame != null) _loaded();
+          if (wasSynchronouslyLoaded) {
+            _opacity.value = 1;
+            _sawFirstFrame = true;
+            _placeholderVisible = false;
+            return child;
+          }
+          if (!widget.fade) {
+            if (frame != null) _sawFirstFrame = true;
+            return frame != null ? child : widget.placeholderBuilder(context);
+          }
+          if (frame == null && !_sawFirstFrame) {
+            // Async load in progress: hide the image and show the placeholder
+            // beneath until the first frame arrives. Mutating outside setState
+            // is fine here — we're inside build.
+            _opacity.value = 0;
+            _placeholderVisible = true;
+          } else if (frame != null && !_sawFirstFrame) {
+            _startFade();
+          }
+          if (!_placeholderVisible) return child;
+          return Stack(
+            fit: StackFit.passthrough,
+            alignment: Alignment.center,
+            children: [widget.placeholderBuilder(context), child],
+          );
+        },
+      ),
+    );
+  }
+}
+
+enum LocalFileResolution { pending, missing, present }
+
+typedef LocalFileResolutionBuilder = Widget Function(BuildContext context, LocalFileResolution resolution, File? file);
+
+Future<bool> _defaultLocalFileExists(File file) => file.exists();
+
+/// Resolves local file availability without blocking the build isolate.
+///
+/// Results are scoped to this widget state and keyed by [path]. Present files
+/// are always cached. Missing files are cached only when [cacheMissing] is set,
+/// allowing consumers that expect late file creation to retry on rebuild.
+class ResolvedLocalFile extends StatefulWidget {
+  const ResolvedLocalFile({
+    super.key,
+    required this.path,
+    required this.builder,
+    this.cacheMissing = false,
+    this.fileExists = _defaultLocalFileExists,
+  });
+
+  final String path;
+  final LocalFileResolutionBuilder builder;
+  final bool cacheMissing;
+
+  @visibleForTesting
+  final Future<bool> Function(File file) fileExists;
+
+  @override
+  State<ResolvedLocalFile> createState() => _ResolvedLocalFileState();
+}
+
+class _ResolvedLocalFileState extends State<ResolvedLocalFile> {
+  final Map<String, File> _presentFiles = <String, File>{};
+  final Set<String> _missingFiles = <String>{};
+  final Set<String> _pendingPaths = <String>{};
+  File? _file;
+  LocalFileResolution _resolution = LocalFileResolution.pending;
+
+  @override
+  void initState() {
+    super.initState();
+    _resolve();
+  }
+
+  @override
+  void didUpdateWidget(ResolvedLocalFile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.fileExists != widget.fileExists) {
+      _presentFiles.clear();
+      _missingFiles.clear();
+      _pendingPaths.clear();
+    } else if (oldWidget.cacheMissing && !widget.cacheMissing) {
+      _missingFiles.clear();
+    }
+    if (oldWidget.path != widget.path ||
+        oldWidget.fileExists != widget.fileExists ||
+        _resolution == LocalFileResolution.missing) {
+      _resolve();
+    }
+  }
+
+  void _resolve() {
+    final path = widget.path;
+    final present = _presentFiles[path];
+    if (present != null) {
+      _file = present;
+      _resolution = LocalFileResolution.present;
+      return;
+    }
+    if (widget.cacheMissing && _missingFiles.contains(path)) {
+      _file = null;
+      _resolution = LocalFileResolution.missing;
+      return;
+    }
+
+    _file = null;
+    _resolution = LocalFileResolution.pending;
+    if (!_pendingPaths.add(path)) return;
+
+    final candidate = File(path);
+    try {
+      widget
+          .fileExists(candidate)
+          .then(
+            (exists) => _complete(path, candidate, exists),
+            onError: (Object _, StackTrace _) => _complete(path, candidate, false),
+          );
+    } catch (_) {
+      _complete(path, candidate, false);
+    }
+  }
+
+  void _complete(String path, File candidate, bool exists) {
+    if (!mounted) return;
+    _pendingPaths.remove(path);
+    if (exists) {
+      _presentFiles[path] = candidate;
+      _missingFiles.remove(path);
+    } else if (widget.cacheMissing) {
+      _missingFiles.add(path);
+    }
+    if (widget.path != path) return;
+    setState(() {
+      _file = exists ? candidate : null;
+      _resolution = exists ? LocalFileResolution.present : LocalFileResolution.missing;
+    });
+  }
+
+  @override
+  void dispose() {
+    _presentFiles.clear();
+    _missingFiles.clear();
+    _pendingPaths.clear();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.builder(context, _resolution, _file);
+}

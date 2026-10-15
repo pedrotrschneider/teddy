@@ -1,0 +1,88 @@
+import 'dart:typed_data';
+
+import 'package:flutter/widgets.dart';
+
+import '../media/media_part_timeline.dart';
+import '../media/media_source_info.dart';
+
+sealed class ScrubFrame {
+  const ScrubFrame();
+
+  /// Source frame aspect ratio (width / height). The tooltip uses this to
+  /// pick its own height; the renderer assumes the box already matches.
+  double get aspectRatio;
+}
+
+/// Plex BIF: standalone JPEG bytes ready for [Image.memory].
+class BytesScrubFrame extends ScrubFrame {
+  final Uint8List bytes;
+  @override
+  final double aspectRatio;
+  const BytesScrubFrame(this.bytes, {this.aspectRatio = 16 / 9});
+}
+
+class SheetScrubFrame extends ScrubFrame {
+  final ImageProvider sheet;
+  final int tileColumn;
+  final int tileRow;
+  final int sheetColumns;
+  final int sheetRows;
+  final Size sourceTileSize;
+  const SheetScrubFrame({
+    required this.sheet,
+    required this.tileColumn,
+    required this.tileRow,
+    required this.sheetColumns,
+    required this.sheetRows,
+    required this.sourceTileSize,
+  });
+
+  @override
+  double get aspectRatio => sourceTileSize.width / sourceTileSize.height;
+}
+
+abstract class ScrubPreviewSource {
+  bool get isAvailable;
+  ScrubFrame? getFrame(Duration time);
+  void dispose();
+}
+
+/// Whether a scrub preview built for [loaded] also serves [current]: the
+/// same file, or the same stacked version (whose preview spans every file).
+bool scrubPreviewServes(MediaSourceInfo loaded, MediaSourceInfo? current) {
+  if (current == null) return false;
+  if (loaded.partId != null && loaded.partId == current.partId) return true;
+  return loaded.partTimeline != null &&
+      current.partTimeline != null &&
+      loaded.mediaSourceId != null &&
+      loaded.mediaSourceId == current.mediaSourceId;
+}
+
+/// Previews for an item stacked across several files: each file has its own
+/// source on its own clock, and the timeline is the whole item's, so a time
+/// is handed to the file that holds it, shifted onto that file's clock.
+/// A file whose source failed to load shows no frames.
+class StackedScrubPreviewSource implements ScrubPreviewSource {
+  StackedScrubPreviewSource({required this.timeline, required List<ScrubPreviewSource?> sources})
+    : assert(sources.length == timeline.parts.length),
+      _sources = sources;
+
+  final MediaPartTimeline timeline;
+  final List<ScrubPreviewSource?> _sources;
+
+  @override
+  bool get isAvailable => _sources.any((source) => source?.isAvailable ?? false);
+
+  @override
+  ScrubFrame? getFrame(Duration time) {
+    final index = timeline.indexAt(time);
+    return _sources[index]?.getFrame(time - timeline.parts[index].start);
+  }
+
+  @override
+  void dispose() {
+    for (final source in _sources) {
+      source?.dispose();
+    }
+  }
+}
