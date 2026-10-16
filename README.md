@@ -94,3 +94,11 @@ The current automated suites cover these boundaries; this checklist is for owner
 ## Automated releases
 
 Main pushes publish GitHub releases; develop pushes publish prereleases. PRs produce workflow artifacts only. Version allocation starts from `version.txt` (0.1); TED and Teddy must share their major version. See [release setup and compatibility](../ted/docs/releases.md) for the platform matrix, required Android signing secrets, limitations, and rerun behavior. Inherited upstream store-release scripts are not the Teddy release path.
+
+## Updates
+
+Settings → Look for Updates offers Stable (default) and Release Candidate channels. Update to version… downloads and verifies the official package and installs it. Desktop Teddy restarts after closing downloads/storage; Android asks for installation permission/confirmation. Major-version changes are manual because TED and Teddy majors must match. Development builds do not auto-update.
+
+Desktop installs must be in a writable, dedicated app folder; keep downloads outside it. Windows/Linux packages need the included teddy-release.json. The previous app and installer log are retained beside the app in .teddy-update-*/previous and install.log; close all Teddy processes before manually restoring a previous bundle. This first updater release itself must be installed manually. See [release documentation](../ted/docs/releases.md) for verification and platform limitations.
+
+Application artwork lives in icon.png. On macOS regenerate the committed Mac/Windows/Android icon sizes using `devbox run -- python3 scripts/generate-app-icons.py`. Linux bundles the source PNG directly.

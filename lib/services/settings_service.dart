@@ -710,6 +710,7 @@ class SettingsService extends BaseSharedPreferencesService {
   /// Restore the last music session parked-paused on launch (#2148).
   static const resumeMusicOnLaunch = BoolPref('resume_music_on_launch', defaultValue: true);
   static const autoPlayNextEpisode = BoolPref('auto_play_next_episode', defaultValue: true);
+  static const teddyUpdateChannel = StringPref('teddy_update_channel', defaultValue: 'stable');
   static const teddyAutoPlayNextEpisode = BoolPref('teddy_auto_play_next_episode');
   static const teddyStartupSection = EnumPref<TeddySection>(
     'teddy_startup_section',
@@ -1412,6 +1413,7 @@ class SettingsService extends BaseSharedPreferencesService {
     teddyStartupSection,
     teddyDownloadChunkMiB,
     teddyMaxSimultaneousDownloads,
+    teddyUpdateChannel,
     playNextCountdown,
     shuffleStartsFromBeginning,
     gestureBrightnessSwipe,

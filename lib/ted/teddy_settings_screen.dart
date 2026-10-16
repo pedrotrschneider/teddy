@@ -1,3 +1,4 @@
+import 'teddy_update_settings.dart';
 import 'ted_version.dart';
 import 'dart:async';
 import 'dart:io';
@@ -432,6 +433,7 @@ class TeddySettingsScreenState extends State<TeddySettingsScreen> {
               SettingNavigationTile(icon: Icons.file_download_outlined, title: 'Import settings', onTap: _import),
             ],
           ),
+          TeddyUpdateSettings(downloadRoot: widget.downloads?.root.path),
           const SettingsSectionHeader('About'),
           SettingsGroup(
             children: [

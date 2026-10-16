@@ -932,6 +932,35 @@ class MainActivity : FlutterActivity() {
       }
     }
 
+    MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "teddy/updates").setMethodCallHandler { call, result ->
+      if (call.method != "install") {
+        result.notImplemented()
+      } else {
+        try {
+          val path = call.argument<String>("path") ?: throw IllegalArgumentException("Missing update")
+          val apk = java.io.File(path).canonicalFile
+          val updateRoot = java.io.File(cacheDir, "teddy-updates").canonicalFile
+          if (!apk.path.startsWith(updateRoot.path + java.io.File.separator) || !apk.isFile || apk.extension != "apk") {
+            throw IllegalArgumentException("Invalid update path")
+          }
+          if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !packageManager.canRequestPackageInstalls()) {
+            startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, android.net.Uri.parse("package:$packageName")))
+            result.success(false)
+          } else {
+            // Android verifies package identity, version code and retained signing key.
+            val info = packageManager.getPackageArchiveInfo(apk.path, 0)
+            if (info?.packageName != packageName) throw IllegalArgumentException("Wrong update package")
+            val uri = androidx.core.content.FileProvider.getUriForFile(this, "com.edde746.plezy.fileprovider", apk)
+            startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
+              .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+            result.success(true)
+          }
+        } catch (e: Exception) {
+          result.error("update_install_failed", "Android could not open the update installer.", null)
+        }
+      }
+    }
+
     MethodChannel(flutterEngine.dartExecutor.binaryMessenger, APP_EXIT_CHANNEL).setMethodCallHandler { call, result ->
       when (call.method) {
         "requestExit" -> {

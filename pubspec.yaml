@@ -88,8 +88,8 @@ dependencies:
   string_similarity: ^2.2.0
   unorm_dart: ^0.3.2
 
-dev_dependencies:
   archive: ^4.0.9
+dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^6.0.0

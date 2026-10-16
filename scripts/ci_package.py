@@ -1,5 +1,6 @@
 """Build Teddy's entry point and package complete native runtime bundles."""
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -29,6 +30,11 @@ if platform == 'android':
     # One APK covers phones and TV: the manifest declares Leanback optional.
     args += ['--target-platform', 'android-arm,android-arm64,android-x64']
 subprocess.run(args, check=True)
+def stamp_bundle(bundle):
+    # The updater must never replace a general-purpose folder containing user files.
+    entries = sorted({p.name for p in bundle.iterdir()} | {'teddy-release.json'})
+    (bundle/'teddy-release.json').write_text(json.dumps({'product':'Teddy','version':version,'entries':entries}))
+
 if platform == 'macos':
     app = Path('build/macos/Build/Products/Release/Teddy.app')
     shutil.copy('LICENSE', app/'Contents/Resources/LICENSE.txt')
@@ -45,6 +51,7 @@ elif platform == 'windows':
     (bundle/'plezy.exe').rename(bundle/'Teddy.exe')
     shutil.copy('LICENSE', bundle/'LICENSE.txt')
     shutil.copytree('third_party', bundle/'third_party', dirs_exist_ok=True)
+    stamp_bundle(bundle)
     shutil.make_archive(str(dist/name), 'zip', bundle)
 elif platform == 'linux':
     bundle = Path(f'build/linux/{arch}/release/bundle')
@@ -64,6 +71,7 @@ elif platform == 'linux':
     deps = subprocess.check_output(['ldd',str(bundle/'plezy')], env=env, text=True)
     if 'not found' in deps:
         raise SystemExit(deps)
+    stamp_bundle(bundle)
     with tarfile.open(dist/f'{name}.tar.gz', 'w:gz') as archive:
         archive.add(bundle, arcname='Teddy')
 elif platform == 'android':

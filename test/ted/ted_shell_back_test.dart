@@ -64,6 +64,10 @@ void main() {
   final back = find.byKey(const ValueKey('ted-detail-back'));
   Future<void> tap(WidgetTester tester, Finder target) async {
     await tester.ensureVisible(target);
+    // Apply the scroll offset before hit testing the tap. Lazy settings rows
+    // can exist in the cache extent while still being below the viewport.
+    await tester.pumpAndSettle();
+    expect(target.hitTestable(), findsOneWidget);
     await tester.tap(target);
     await tester.pumpAndSettle();
   }
