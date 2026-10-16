@@ -35,6 +35,11 @@ subprojects {
                 // their dependencies already require current APIs.
                 extension.compileSdk = 36
                 extension.buildToolsVersion = "36.1.0"
+                // jni inherits Flutter's older NDK and an unpinned CMake.
+                // Use the app/CI toolchain for every library as well, so Gradle
+                // does not try to install another SDK during configuration.
+                extension.ndkVersion = "29.0.14206865"
+                extension.externalNativeBuild.cmake.version = "4.1.2"
                 // The Flutter plugin copies the app's build types into every plugin
                 // module, so `minified` arrives here carrying the app's shrinker flags.
                 // Library-level shrinking then deletes the plugin entry points that only

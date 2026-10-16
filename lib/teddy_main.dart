@@ -1,4 +1,5 @@
 import 'ted/ted_profile_screen.dart';
+import 'ted/ted_profile_pictures.dart';
 import 'ted/ted_secure_storage_recovery.dart';
 import 'ted/ted_source_cache.dart';
 import 'ted/ted_home_cache.dart';
@@ -219,6 +220,7 @@ class _TeddyHomeState extends State<TeddyHome> {
   late final _profiles = widget.profiles ?? TedProfiles();
   late TedAuth _auth = TedAuth(store: _profiles.connection(), deviceId: widget.deviceId);
   TedProfileSnapshot _savedProfiles = const TedProfileSnapshot(null, []);
+  late final _pictures = TedProfilePictures(widget.store);
   bool _showProfiles = true, _serverReadOnly = false;
   String? _profileServer;
   final _server = TextEditingController();
@@ -249,6 +251,7 @@ class _TeddyHomeState extends State<TeddyHome> {
   void initState() {
     super.initState();
     _profiles.addListener(_storageChanged);
+    _pictures.addListener(_storageChanged);
     unawaited(_restoration = _restore());
     _sync = Timer.periodic(const Duration(seconds: 30), (_) => _syncHistory());
   }
@@ -265,12 +268,29 @@ class _TeddyHomeState extends State<TeddyHome> {
     _downloads.pumpQueue();
     unawaited(_downloads.applyPolicies().catchError((Object _) {}));
     if (_shutdown?.closing ?? false) return;
+    _refreshPicture();
     final scope = tedOfflineScope(_auth);
     if (scope != null && _auth.signedIn) unawaited(widget.store.flush(_client, scope).catchError((Object _) {}));
   }
 
   void _storageChanged() {
     if (mounted) setState(() {});
+  }
+
+  Future<void> _readProfiles() async {
+    _savedProfiles = await _profiles.read();
+    await _pictures.load(_savedProfiles.profiles.where((p) => !p.purging).map((p) => p.scope));
+  }
+
+  void _refreshPicture({bool force = false}) {
+    final auth = _auth;
+    unawaited(
+      _pictures.refresh(
+        auth,
+        force: force,
+        current: () => mounted && identical(auth, _auth) && !_showProfiles && !(_shutdown?.closing ?? false),
+      ),
+    );
   }
 
   Future<void> _retrySecureStorage() {
@@ -292,7 +312,7 @@ class _TeddyHomeState extends State<TeddyHome> {
       _newConnection();
       await _downloads.recover();
     }
-    _savedProfiles = await _profiles.read();
+    await _readProfiles();
     final active = _savedProfiles.profiles.where((p) => p.key == _savedProfiles.active && !p.purging).firstOrNull;
     _profileServer = active?.server ?? _savedProfiles.profiles.where((p) => !p.purging).firstOrNull?.server;
     // Restore credentials and start account work only after an explicit choice.
@@ -331,6 +351,7 @@ class _TeddyHomeState extends State<TeddyHome> {
   }
 
   Future<void> _load() async {
+    _refreshPicture(force: true);
     if (mounted) setState(() => _catalogEpoch++);
   }
 
@@ -358,7 +379,7 @@ class _TeddyHomeState extends State<TeddyHome> {
     await _downloads.recover();
     _downloads.startPolicies();
     _password.clear();
-    _savedProfiles = await _profiles.read();
+    await _readProfiles();
     _profileServer = _auth.server.toString();
     _showProfiles = false;
     _browseKey = GlobalKey<TedBrowseScreenState>();
@@ -411,7 +432,7 @@ class _TeddyHomeState extends State<TeddyHome> {
     setState(() => _showProfiles = true);
     await _pauseProfile();
     await _profiles.activate(null);
-    _savedProfiles = await _profiles.read();
+    await _readProfiles();
     _newConnection();
     if (changeServer) {
       _serverReadOnly = false;
@@ -478,7 +499,7 @@ class _TeddyHomeState extends State<TeddyHome> {
     final pending = await _profiles.read();
     if (pending.active != null) throw const TedFailure('storage_unavailable');
     await _recoverProfilePurges();
-    _savedProfiles = await _profiles.read();
+    await _readProfiles();
     _newConnection();
     _username.clear();
     _password.clear();
@@ -486,6 +507,7 @@ class _TeddyHomeState extends State<TeddyHome> {
 
   Widget _profileChooser() => TedProfileScreen(
     snapshot: _savedProfiles,
+    pictures: _pictures.images,
     server: _profileServer,
     busy: _busy,
     error: _error,
@@ -657,6 +679,8 @@ class _TeddyHomeState extends State<TeddyHome> {
     _sync?.cancel();
     _auth.close();
     _profiles.removeListener(_storageChanged);
+    _pictures.removeListener(_storageChanged);
+    _pictures.dispose();
     _server.dispose();
     _username.dispose();
     _password.dispose();
@@ -737,6 +761,8 @@ class _TeddyHomeState extends State<TeddyHome> {
                     }
                   },
                   displayName: _auth.displayName ?? '',
+                  profilePicture: _pictures[tedOfflineScope(_auth)],
+                  onReload: () => _refreshPicture(force: true),
                   onSettings: _openSettings,
                   onLayoutRestart: _restartLayout,
                   onSwitchProfile: _busy ? null : () => _work(() => _switchProfile()),

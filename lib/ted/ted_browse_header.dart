@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import '../utils/initials_palette.dart';
+import 'dart:typed_data';
+import 'ted_profile_avatar.dart';
 import '../widgets/app_menu.dart';
 import '../widgets/navigation_rail_item.dart';
 import '../widgets/clickable_cursor.dart';
@@ -31,6 +32,7 @@ class TedSidebarControls extends StatefulWidget {
   // The sidebar uses the desktop width in both desktop and TV layouts.
   static const collapsedContentWidth = NavigationRailLayout.collapsedWidth - 8;
   final String displayName;
+  final Uint8List? profilePicture;
   final VoidCallback? onReload, onSettings, onSignOut, onSwitchProfile, onChangeServer;
   final bool compact, collapsed;
   final bool settingsSelected;
@@ -38,6 +40,7 @@ class TedSidebarControls extends StatefulWidget {
   const TedSidebarControls({
     super.key,
     required this.displayName,
+    this.profilePicture,
     this.onReload,
     this.onSettings,
     this.onSignOut,
@@ -99,6 +102,7 @@ class _TedSidebarControlsState extends State<TedSidebarControls> {
       _action('Settings', Icons.settings_outlined, _settings, widget.onSettings),
       TedAccountMenu(
         displayName: widget.displayName,
+        profilePicture: widget.profilePicture,
         focusNode: _account,
         onSignOut: widget.onSignOut,
         onSwitchProfile: widget.onSwitchProfile,
@@ -125,6 +129,7 @@ enum _AccountAction { profiles, server, logout }
 /// Account identity and sign out; Settings is a separate sidebar action.
 class TedAccountMenu extends StatelessWidget {
   final String displayName;
+  final Uint8List? profilePicture;
   final FocusNode focusNode;
   final VoidCallback? onSignOut, onSwitchProfile, onChangeServer;
   final bool collapsed;
@@ -133,6 +138,7 @@ class TedAccountMenu extends StatelessWidget {
   const TedAccountMenu({
     super.key,
     required this.displayName,
+    this.profilePicture,
     required this.focusNode,
     required this.onSignOut,
     this.onSwitchProfile,
@@ -185,14 +191,7 @@ class TedAccountMenu extends StatelessWidget {
     child: ClickableCursor(
       child: NavigationRailItem(
         icon: Icons.person_outline,
-        iconWidget: CircleAvatar(
-          radius: 16,
-          backgroundColor: colorForName(displayName, Theme.of(context)),
-          child: Text(
-            initialOf(displayName),
-            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
-          ),
-        ),
+        iconWidget: TedProfileAvatar(name: displayName, image: profilePicture, diameter: 32),
         label: Text(displayName, maxLines: 1, overflow: TextOverflow.ellipsis),
         isSelected: false,
         mouseCursor: SystemMouseCursors.click,

@@ -48,6 +48,7 @@ void main() {
     await db.customStatement('DROP TABLE ted_source_cache');
     await db.customStatement('DROP TABLE ted_home_cache');
  await db.customStatement('ALTER TABLE ted_sessions DROP COLUMN qualified');
+ await db.customStatement('DROP TABLE ted_profile_pictures');
  await db.customStatement('PRAGMA user_version=27');
     await store.close();
     db = AppDatabase.forTesting(NativeDatabase(databaseFile));

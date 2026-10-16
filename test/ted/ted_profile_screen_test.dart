@@ -8,6 +8,7 @@ import 'package:plezy/ted/ted_profile_screen.dart';
 import 'package:plezy/ted/ted_profiles.dart';
 import 'package:plezy/ted/ted_models.dart';
 import 'ted_auth_test.dart' show pair;
+import 'ted_profile_pictures_test.dart' show picture;
 
 TedSavedProfile profile(int id, {String server = 'https://ted.example', bool purging = false}) {
   final tokens = pair(DateTime.utc(2026, 10, 14), userId: id);
@@ -20,11 +21,17 @@ TedSavedProfile profile(int id, {String server = 'https://ted.example', bool pur
   return TedSavedProfile(tedProfileKey(credentials), credentials, purging: purging);
 }
 
-Widget chooser(List<TedSavedProfile> profiles, ValueChanged<String> select, {bool busy = false}) => InputModeTracker(
+Widget chooser(
+  List<TedSavedProfile> profiles,
+  ValueChanged<String> select, {
+  bool busy = false,
+  Map<String, Uint8List> pictures = const {},
+}) => InputModeTracker(
   child: MaterialApp(
     home: Scaffold(
       body: TedProfileScreen(
         snapshot: TedProfileSnapshot(null, profiles),
+        pictures: pictures,
         server: tedServerUri('https://ted.example').toString(),
         busy: busy,
         error: null,
@@ -38,6 +45,21 @@ Widget chooser(List<TedSavedProfile> profiles, ValueChanged<String> select, {boo
 );
 
 void main() {
+  testWidgets('cached account pictures appear in the chooser with initials for other profiles and keyboard selection', (
+    tester,
+  ) async {
+    final first = profile(1), second = profile(2);
+    final image = (await tester.runAsync(picture))!;
+    var chosen = '';
+    await tester.pumpWidget(chooser([first, second], (name) => chosen = name, pictures: {first.scope: image}));
+    await tester.pumpAndSettle();
+    final rendered = tester.widget<Image>(find.byType(Image));
+    expect((rendered.image as MemoryImage).bytes, image);
+    expect(find.text('P'), findsOneWidget);
+    await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+    expect(chosen, first.name);
+    expect(tester.takeException(), isNull);
+  });
   testWidgets('horizontal profile selection, plus tile and saved-server controls remain keyboard accessible', (
     tester,
   ) async {

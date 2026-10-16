@@ -20,7 +20,11 @@ const tedHomeCacheSchema = '''CREATE TABLE ted_home_cache (
  scope TEXT NOT NULL, row_id TEXT NOT NULL, value TEXT NOT NULL,
  PRIMARY KEY(scope,row_id)
 )''';
+const tedProfilePicturesSchema = '''CREATE TABLE ted_profile_pictures (
+ scope TEXT PRIMARY KEY, image BLOB NOT NULL
+)''';
 const tedSchema = [
+  tedProfilePicturesSchema,
   tedHomeCacheSchema,
   tedSourceCacheSchema,
   tedTrackLanguagesSchema,

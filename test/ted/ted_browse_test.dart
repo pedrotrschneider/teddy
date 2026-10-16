@@ -116,6 +116,7 @@ void main() {
     double height = 900,
     String displayName = 'Tester',
     VoidCallback? onSettings,
+    VoidCallback? onReload,
     onSignOut,
   }) async {
     tester.view.physicalSize = Size(width, height);
@@ -134,6 +135,7 @@ void main() {
               onPlay: (_) async {},
               displayName: displayName,
               onSettings: onSettings,
+              onReload: onReload,
               onSignOut: onSignOut,
             ),
           ),
@@ -161,9 +163,11 @@ void main() {
 
   testWidgets('Home refresh retains loaded shelves and ignores updates after changing sections', (tester) async {
     final client = ProgressiveHomeFixture();
-    await mount(tester, client);
+    var profileRefreshes = 0;
+    await mount(tester, client, onReload: () => profileRefreshes++);
     client.pendingHome = Completer<List<TedHomeRow>>();
     await tester.tap(find.byTooltip('Reload'));
+    expect(profileRefreshes, 1);
     await tester.pump();
     client.updateHome!([
       const TedHomeRow('continue-watching', [], false, [], loading: true),

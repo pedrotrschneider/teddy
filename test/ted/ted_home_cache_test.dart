@@ -121,6 +121,7 @@ void main() {
     );
     await db.customStatement("INSERT INTO ted_reports(id,session_id,envelope) VALUES('e','s','immutable')");
     await db.customStatement('DROP TABLE ted_home_cache');
+    await db.customStatement('DROP TABLE ted_profile_pictures');
     await db.customStatement('ALTER TABLE ted_sessions DROP COLUMN qualified');
     await db.customStatement('PRAGMA user_version=30');
     await db.close();

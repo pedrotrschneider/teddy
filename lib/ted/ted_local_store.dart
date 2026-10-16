@@ -45,11 +45,37 @@ class TedLocalStore {
         'ted_track_languages',
         'ted_source_cache',
         'ted_home_cache',
+        'ted_profile_pictures',
       ]) {
         await db.customStatement('DELETE FROM $table WHERE scope=?', [scope]);
       }
     }),
   );
+
+  Future<Uint8List?> profilePicture(String scope) async {
+    final row = await db
+        .customSelect('SELECT image FROM ted_profile_pictures WHERE scope=?', variables: [Variable(scope)])
+        .getSingleOrNull();
+    return row?.read<Uint8List>('image');
+  }
+
+  // Recheck the connection inside the actual serialized write. A response from
+  // before switching/signing out must not recreate a purged account cache.
+  Future<void> saveProfilePicture(
+    String scope,
+    Uint8List? image, {
+    required bool Function() valid,
+  }) => _serial(() async {
+    if (!valid()) return;
+    if (image == null) {
+      await db.customStatement('DELETE FROM ted_profile_pictures WHERE scope=?', [scope]);
+    } else {
+      await db.customStatement(
+        'INSERT INTO ted_profile_pictures(scope,image) VALUES(?,?) ON CONFLICT(scope) DO UPDATE SET image=excluded.image',
+        [scope, image],
+      );
+    }
+  });
 
   Future<Map<String, dynamic>?> downloadStorage() async {
     final row = await db

@@ -369,7 +369,7 @@ class AppDatabase extends _$AppDatabase {
   static const FormatException _invalidRecoveryImage = FormatException('Invalid tvOS database recovery image');
 
   @override
-  int get schemaVersion => 31;
+  int get schemaVersion => 32;
 
   @override
   MigrationStrategy get migration {
@@ -775,6 +775,7 @@ class AppDatabase extends _$AppDatabase {
           }
         }
         if (from >= 26 && from < 30) await customStatement(tedSourceCacheSchema);
+        if (from >= 26 && from < 32) await customStatement(tedProfilePicturesSchema);
         if (from >= 26 && from < 31) {
           await customStatement(tedHomeCacheSchema);
           await customStatement('ALTER TABLE ted_sessions ADD COLUMN qualified INTEGER NOT NULL DEFAULT 0');

@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
+import 'dart:typed_data';
 import '../focus/card_focus_scope.dart';
 import '../focus/focusable_wrapper.dart';
 import '../utils/initials_palette.dart';
 import 'ted_profiles.dart';
 import 'ted_focus_region.dart';
+import 'ted_profile_avatar.dart';
 
 class TedProfileScreen extends StatelessWidget {
   final TedProfileSnapshot snapshot;
+  final Map<String, Uint8List> pictures;
   final String? server, error;
   final bool busy;
   final ValueChanged<TedSavedProfile> onSelect;
@@ -15,6 +18,7 @@ class TedProfileScreen extends StatelessWidget {
   const TedProfileScreen({
     super.key,
     required this.snapshot,
+    this.pictures = const {},
     required this.server,
     required this.busy,
     required this.error,
@@ -73,13 +77,10 @@ class TedProfileScreen extends StatelessWidget {
                                     diameter: diameter,
                                     color: colorForName(profile.name, theme),
                                     onSelect: busy ? null : () => onSelect(profile),
-                                    child: Text(
-                                      initialOf(profile.name),
-                                      style: TextStyle(
-                                        fontSize: diameter * .38,
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w500,
-                                      ),
+                                    child: TedProfileAvatar(
+                                      name: profile.name,
+                                      image: pictures[profile.scope],
+                                      diameter: diameter - 8,
                                     ),
                                   ),
                                 _ProfileChoice(

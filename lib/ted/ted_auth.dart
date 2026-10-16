@@ -170,6 +170,10 @@ class TedAuth {
     return _object(await _authenticated(method, path, body: body, abortTrigger: abortTrigger));
   }
 
+  /// Account pictures use the active rotating credential owner, never a public
+  /// URL or an inactive profile's credentials.
+  Future<http.Response> profilePicture() => _authenticated('GET', '/api/client/v1/account/avatar', maxBytes: 512 << 10);
+
   /// Artwork uses the same rotating credential owner as API/player requests.
   /// Tokens never become image URLs or enter a global network-image cache.
   Future<http.Response> artwork(String id) {

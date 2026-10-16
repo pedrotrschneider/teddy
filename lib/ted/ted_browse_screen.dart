@@ -61,6 +61,8 @@ class TedBrowseScreen extends StatefulWidget {
   final TedSelectedDownload? onDownloadSelection;
   final int refreshEpoch;
   final String displayName;
+  final Uint8List? profilePicture;
+  final VoidCallback? onReload;
   final VoidCallback? onSettings, onSignOut, onSwitchProfile, onChangeServer;
   final VoidCallback? onLayoutRestart;
   const TedBrowseScreen({
@@ -75,6 +77,8 @@ class TedBrowseScreen extends StatefulWidget {
     this.onDownloadSelection,
     this.refreshEpoch = 0,
     this.displayName = '',
+    this.profilePicture,
+    this.onReload,
     this.onSettings,
     this.onLayoutRestart,
     this.onSignOut,
@@ -271,6 +275,7 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
   }
 
   Future<void> _reload() async {
+    widget.onReload?.call();
     if (_section == 'downloads' && _details.isEmpty) {
       await _downloadsKey.currentState?.reload();
       return;
@@ -1052,6 +1057,7 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
     onBack: () => _focusSidebar(origin: _sidebarReturnStop),
     child: TedSidebarControls(
       displayName: widget.displayName,
+      profilePicture: widget.profilePicture,
       onReload: _busy ? null : _reload,
       onSettings: widget.onSettings ?? openSettings,
       settingsSelected: _settingsVisible,
