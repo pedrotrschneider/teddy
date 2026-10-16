@@ -28,6 +28,7 @@ TedFilmographyEntry credit(
   bool watched = false,
   bool series = false,
   bool unresolved = false,
+  List<Map<String, dynamic>> jointWatches = const [],
 }) => TedFilmographyEntry.fromJson({
   'item': {'Id': id, 'Type': series ? 'Series' : 'Movie', 'Name': name, 'ProductionYear': 2026},
   'identity_status': unresolved ? 'missing' : 'ready',
@@ -36,6 +37,7 @@ TedFilmographyEntry credit(
   if (!unresolved) 'media': {'kind': series ? 'series' : 'movie', 'id': 'tt${int.parse(id[0]) + 5000000}'},
   'watched': unresolved ? null : watched,
   'viewed': unresolved ? null : viewed,
+  'joint_watches': jointWatches,
 });
 
 class PersonFixture extends MovieFixture {
@@ -46,6 +48,7 @@ class PersonFixture extends MovieFixture {
   String personStatus = 'ready';
   Completer<TedMetadataSnapshot>? heldPerson;
   Completer<TedTitle>? heldAppearance;
+  List<TedFilmographyEntry>? customCredits;
   @override
   Future<TedTitle> title(TedMediaIdentity media) => heldAppearance?.future ?? super.title(media);
   PersonFixture() {
@@ -73,6 +76,7 @@ class PersonFixture extends MovieFixture {
   @override
   Future<TedFilmographyPage> filmography(String id, {String? after}) async {
     creditPages.add(after);
+    if (customCredits != null) return TedFilmographyPage(customCredits!, null);
     if (after != null && failPage) throw const TedFailure('unavailable');
     if (after != null && loopPage) return const TedFilmographyPage([], secondSource);
     return after == null
@@ -89,6 +93,13 @@ class PersonFixture extends MovieFixture {
   @override
   Future<Uint8List?> personPortrait(String id) async => throw const TedFailure('unavailable');
 }
+
+Map<String, dynamic> jointViewing({bool seen = true, int watched = 0, int available = 1}) => {
+  'account_id': 2,
+  'name': 'Joint account',
+  'color': '#12ABCD',
+  'watch': {'seen': seen, 'watched': watched, 'available': available, 'progress': null},
+};
 
 void main() {
   setUpAll(() async {
@@ -184,6 +195,58 @@ void main() {
       expect(tester.getSize(card).width, lessThanOrEqualTo(180));
       expect(tester.takeException(), isNull);
     }
+  });
+
+  testWidgets('person Watched includes joint-only movies and started shows without merging personal completion', (
+    tester,
+  ) async {
+    for (final tv in [false, true]) {
+      final client = PersonFixture()
+        ..customCredits = [
+          credit(firstSource, 'Own movie', viewed: true, jointWatches: [jointViewing()]),
+          credit(secondSource, 'Joint movie', jointWatches: [jointViewing(watched: 1)]),
+          credit(
+            '33333333-3333-4333-8333-333333333333',
+            'Joint started show',
+            series: true,
+            jointWatches: [jointViewing(available: 12)],
+          ),
+          credit('44444444-4444-4444-8444-444444444444', 'Unseen movie', jointWatches: [jointViewing(seen: false)]),
+        ];
+      await mount(tester, client, tv: tv);
+      await tester.pumpAndSettle();
+      final rows = tester.widgetList<HubSection>(find.byType(HubSection)).toList();
+      expect(rows, hasLength(2));
+      expect(rows[0].hub.items.map((item) => item.title), ['Joint movie', 'Joint started show', 'Own movie']);
+      expect(rows[1].hub.items.map((item) => item.title), ['Unseen movie']);
+      final jointItems = rows[0].hub.items.where((item) => item.title?.startsWith('Joint') ?? false).toList();
+      expect(jointItems.every((item) => (item.viewCount ?? 0) == 0), true);
+      for (final item in jointItems) {
+        final projection = (item.raw!['joint_watches'] as List).single as Map;
+        expect(projection['color'], '#12ABCD');
+        expect((projection['watch'] as Map)['seen'], true);
+      }
+      expect(rows.expand((row) => row.hub.items).map((item) => item.id).toSet().length, 4);
+      expect(tester.takeException(), isNull);
+    }
+  });
+
+  testWidgets('removing a joint projection on reload returns its credit to Other', (tester) async {
+    final client = PersonFixture()
+      ..customCredits = [
+        credit(firstSource, 'Joint movie', jointWatches: [jointViewing()]),
+        credit(secondSource, 'Own movie', viewed: true),
+      ];
+    await mount(tester, client);
+    await tester.pumpAndSettle();
+    expect(tester.widget<HubSection>(find.byType(HubSection).first).hub.items.length, 2);
+    client.customCredits = [credit(firstSource, 'Joint movie'), credit(secondSource, 'Own movie', viewed: true)];
+    await tester.state<TedPersonDetailState>(find.byType(TedPersonDetail)).reload();
+    await tester.pumpAndSettle();
+    final rows = tester.widgetList<HubSection>(find.byType(HubSection)).toList();
+    expect(rows[0].hub.items.map((item) => item.title), ['Own movie']);
+    expect(rows[1].hub.items.map((item) => item.title), ['Joint movie']);
+    expect(tester.takeException(), isNull);
   });
   testWidgets('first filmography row restores the full banner and second row scrolls into view', (tester) async {
     for (final tv in [false, true]) {

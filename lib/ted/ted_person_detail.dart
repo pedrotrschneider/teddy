@@ -59,8 +59,8 @@ class TedPersonDetailState extends State<TedPersonDetail> {
   int _generation = 0;
   String _lastLane = 'watched';
   String? _error;
-  List<TedFilmographyEntry> get _watched => _entries.where((v) => v.viewed == true).toList();
-  List<TedFilmographyEntry> get _other => _entries.where((v) => v.viewed != true).toList();
+  List<TedFilmographyEntry> get _watched => _entries.where((v) => v.hasViewing).toList();
+  List<TedFilmographyEntry> get _other => _entries.where((v) => !v.hasViewing).toList();
 
   @override
   void initState() {

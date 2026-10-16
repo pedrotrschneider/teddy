@@ -87,6 +87,10 @@ class TedFilmographyEntry {
   final int? episodeCount, watchedEpisodeCount;
   final List<String> roles;
   final List<TedMetadataAsset> images;
+
+  /// Person rows include read-only joint viewing without merging completion
+  /// or progress into the active account's own state.
+  bool get hasViewing => viewed == true || jointWatches.any((watch) => watch.seen);
   const TedFilmographyEntry({
     this.jointWatches = const [],
     required this.id,
