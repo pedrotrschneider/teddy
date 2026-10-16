@@ -20,8 +20,12 @@ import 'focus/input_mode_tracker.dart';
 import 'focus/key_event_utils.dart';
 import 'services/settings_service.dart' as prefs;
 import 'theme/mono_theme.dart';
+import 'utils/platform_detector.dart';
+import 'utils/app_logger.dart';
 import 'widgets/settings_builder.dart';
 import 'ted/ted_auth.dart';
+import 'ted/ted_back_scope.dart';
+import 'focus/focusable_text_field.dart';
 import 'ted/ted_client.dart';
 import 'ted/ted_sources.dart';
 import 'ted/ted_app_settings.dart';
@@ -89,6 +93,9 @@ class _TeddyStartupState extends State<_TeddyStartup> {
       await initializeTeddyPlatform(settings).timeout(const Duration(seconds: 20));
       final support = await getApplicationSupportDirectory();
       await TeddyLogs.initialize(support);
+      appLogger.i(
+        'TV mode: ${PlatformDetector.isTV()}; detection: ${TvDetectionService.tvDetectionReasonsSync().join(",")}',
+      );
       _store ??= TedLocalStore(
         (await AppDatabase.open(databaseFile: File(p.join(support.path, 'ted-offline.sqlite')))).database,
       );
@@ -653,8 +660,28 @@ class _TeddyHomeState extends State<TeddyHome> {
     super.dispose();
   }
 
+  void _backToProfiles() {
+    FocusManager.instance.primaryFocus?.unfocus();
+    setState(() => _showProfiles = true);
+  }
+
   @override
-  Widget build(BuildContext context) => Scaffold(
+  Widget build(BuildContext context) {
+    final page = _buildPage(context);
+    if (_showProfiles || _auth.signedIn) return page;
+    return TedBackScope(
+      onBack: _backToProfiles,
+      child: Focus(
+        canRequestFocus: false,
+        onKeyEvent: (_, event) => ModalRoute.of(context)?.isCurrent == true
+            ? handleBackKeyAction(event, _backToProfiles)
+            : KeyEventResult.ignored,
+        child: page,
+      ),
+    );
+  }
+
+  Widget _buildPage(BuildContext context) => Scaffold(
     appBar: _auth.signedIn && !_showProfiles
         ? null
         : TedAppBar(
@@ -745,24 +772,31 @@ class _TeddyHomeState extends State<TeddyHome> {
                   child: AutofillGroup(
                     child: Column(
                       children: [
-                        TextField(
+                        FocusableTextField(
                           controller: _server,
-                          readOnly: _serverReadOnly,
+                          enabled: !_serverReadOnly && !_busy,
+                          autofocus: !_serverReadOnly,
+                          tvTextInputAutoOpenBehavior: TvTextInputAutoOpenBehavior.never,
+                          textInputAction: TextInputAction.next,
                           decoration: const InputDecoration(labelText: 'TED server', hintText: 'https://ted.example'),
                           keyboardType: TextInputType.url,
                           autocorrect: false,
                           enableSuggestions: false,
                         ),
                         const SizedBox(height: 16),
-                        TextField(
+                        FocusableTextField(
                           controller: _username,
                           autofillHints: const [AutofillHints.username],
+                          autofocus: _serverReadOnly,
+                          tvTextInputAutoOpenBehavior: TvTextInputAutoOpenBehavior.never,
+                          textInputAction: TextInputAction.next,
                           decoration: const InputDecoration(labelText: 'Username'),
                           autocorrect: false,
                         ),
                         const SizedBox(height: 16),
-                        TextField(
+                        FocusableTextField(
                           controller: _password,
+                          textInputAction: TextInputAction.done,
                           obscureText: true,
                           autocorrect: false,
                           enableSuggestions: false,
@@ -774,10 +808,7 @@ class _TeddyHomeState extends State<TeddyHome> {
                         const SizedBox(height: 24),
                         FilledButton(onPressed: _busy ? null : _login, child: const Text('Sign in')),
                         if (_savedProfiles.profiles.any((p) => !p.purging))
-                          TextButton(
-                            onPressed: _busy ? null : () => setState(() => _showProfiles = true),
-                            child: const Text('Saved profiles'),
-                          ),
+                          TextButton(onPressed: _busy ? null : _backToProfiles, child: const Text('Saved profiles')),
                       ],
                     ),
                   ),

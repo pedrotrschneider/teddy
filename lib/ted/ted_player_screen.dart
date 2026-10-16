@@ -1,3 +1,4 @@
+import '../focus/focusable_text_field.dart';
 import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -268,12 +269,12 @@ class _TeddyPlayerState extends State<TeddyPlayer> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 const Text('Use the same TED account to finish syncing this playback.'),
-                TextField(
+                FocusableTextField(
                   controller: username,
                   decoration: const InputDecoration(labelText: 'Username'),
                   autocorrect: false,
                 ),
-                TextField(
+                FocusableTextField(
                   controller: password,
                   decoration: const InputDecoration(labelText: 'Password (if configured)'),
                   obscureText: true,

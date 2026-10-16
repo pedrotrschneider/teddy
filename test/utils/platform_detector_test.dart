@@ -28,6 +28,18 @@ void main() {
     expect(instances.first.isTV, isTrue);
   });
 
+  test('native false negative cannot mask Chromecast leanback features', () {
+    const native = AndroidTvFeatureDetection(isTv: false, isAutomotive: false, reasons: []);
+    expect(resolveAndroidTvDetection(native, ['android.software.leanback']).isTv, isTrue);
+    expect(resolveAndroidTvDetection(native, ['android.hardware.touchscreen']).isTv, isFalse);
+    expect(
+      resolveAndroidTvDetection(native, ['android.hardware.type.automotive', 'android.software.leanback']).isTv,
+      isFalse,
+    );
+    const television = AndroidTvFeatureDetection(isTv: true, isAutomotive: false, reasons: ['ui_mode_television']);
+    expect(resolveAndroidTvDetection(television, []).isTv, isTrue);
+  });
+
   group('detectAndroidTvFromSystemFeatures', () {
     test('detects leanback devices', () {
       final detection = detectAndroidTvFromSystemFeatures([

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
@@ -105,6 +106,39 @@ void main() {
     expect(find.byType(TedSeriesDetail), findsNothing);
     expect(back, findsNothing);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Android system Back follows episode, season, show and closes dialogs first', (tester) async {
+    await mount(tester, SeriesDetailFixture());
+    await tap(tester, destination('Shows'));
+    await tap(tester, find.byType(MediaCard).first);
+    await tap(tester, find.byType(MediaCard).first);
+    await tap(tester, find.byType(MediaCard).first);
+    expect(find.byType(TedEpisodeDetail), findsOneWidget);
+    final context = tester.element(find.byType(TedEpisodeDetail));
+    unawaited(
+      showDialog<void>(
+        context: context,
+        builder: (_) => const AlertDialog(title: Text('Back fixture')),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.byType(TedEpisodeDetail), findsOneWidget);
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.byType(TedSeasonDetail), findsOneWidget);
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.byType(TedSeriesDetail), findsOneWidget);
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.byType(TedSeriesDetail), findsNothing);
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(destination('Shows'), findsOneWidget);
   });
 
   testWidgets('movie and person Back stay fixed; Up reaches Back and sidebar Right restores it', (tester) async {

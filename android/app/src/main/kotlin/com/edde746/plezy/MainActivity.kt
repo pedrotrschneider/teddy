@@ -282,7 +282,9 @@ class MainActivity : FlutterActivity() {
   private fun getAndroidTvDetection(): Map<String, Any> {
     val pm = packageManager
     val uiModeType = resources.configuration.uiMode and Configuration.UI_MODE_TYPE_MASK
-    val isTelevisionUiMode = uiModeType == Configuration.UI_MODE_TYPE_TELEVISION
+    val managerMode = (getSystemService(Context.UI_MODE_SERVICE) as? android.app.UiModeManager)?.currentModeType
+    val isTelevisionUiMode = uiModeType == Configuration.UI_MODE_TYPE_TELEVISION ||
+      managerMode == Configuration.UI_MODE_TYPE_TELEVISION
 
     @Suppress("DEPRECATION")
     val hasTelevisionFeature = pm.hasSystemFeature(PackageManager.FEATURE_TELEVISION)

@@ -29,8 +29,10 @@ notes = (f'Teddy {version}\n\nRequires TED major {version.split(".")[0]} (includ
          'See release setup documentation for runtime prerequisites and signing limitations.')
 Path('release-notes.txt').write_text(notes)
 if not release:
-    gh('release','create',tag,'--verify-tag','--draft','--title',f'Teddy {version}',
+    gh('release','create',tag,'--target',os.environ['GITHUB_SHA'],'--draft','--title',f'Teddy {version}',
        '--notes-file','release-notes.txt', *(['--prerelease'] if pre else []))
+# A failed draft may be reused by the next successful build of this version.
+gh('release','edit',tag,'--target',os.environ['GITHUB_SHA'])
 gh('release','upload',tag, *[str(p) for p in files], '--clobber')
 gh('release','edit',tag,'--draft=false', f'--prerelease={str(pre).lower()}',
    f'--latest={str(not pre and os.environ["PROMOTE"] == "true").lower()}')

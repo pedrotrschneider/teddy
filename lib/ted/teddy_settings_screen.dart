@@ -275,7 +275,9 @@ class TeddySettingsScreenState extends State<TeddySettingsScreen> {
                 pref: prefs.SettingsService.forceTvMode,
                 icon: Icons.tv_outlined,
                 title: 'Force TV mode',
-                subtitle: 'Restart the browsing layout with TV controls.',
+                subtitle: TvDetectionService.isAutomaticallyDetectedTV()
+                    ? 'TV detected automatically. TV controls are already enabled.'
+                    : 'Use TV controls on devices without automatic TV detection.',
                 enabled: !_busy && !_changingTvMode,
                 onWrite: _setTvMode,
               ),

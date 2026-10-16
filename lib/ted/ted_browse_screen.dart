@@ -1,3 +1,4 @@
+import 'ted_back_scope.dart';
 import 'dart:async';
 import '../models/teddy_section.dart';
 import 'dart:math' as math;
@@ -874,13 +875,15 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
 
   KeyEventResult _handleBack(KeyEvent event) {
     if (ModalRoute.of(context)?.isCurrent != true) return KeyEventResult.ignored;
-    return handleBackKeyAction(event, () {
-      if (_details.isNotEmpty) {
-        _closeDetail();
-      } else {
-        _focusSidebar();
-      }
-    });
+    return handleBackKeyAction(event, _goBack);
+  }
+
+  void _goBack() {
+    if (_details.isNotEmpty) {
+      _closeDetail();
+    } else {
+      _focusSidebar();
+    }
   }
 
   bool _backWithoutFocus(KeyEvent event) {
@@ -1668,11 +1671,14 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
             ],
           );
           final ordered = FocusTraversalGroup(policy: OrderedTraversalPolicy(), child: browse);
-          return Focus(
-            focusNode: _browseFocus,
-            canRequestFocus: false,
-            onKeyEvent: (_, event) => _handleBack(event),
-            child: wide ? SideNavigationScope(child: ordered) : ordered,
+          return TedBackScope(
+            onBack: _goBack,
+            child: Focus(
+              focusNode: _browseFocus,
+              canRequestFocus: false,
+              onKeyEvent: (_, event) => _handleBack(event),
+              child: wide ? SideNavigationScope(child: ordered) : ordered,
+            ),
           );
         },
       ),

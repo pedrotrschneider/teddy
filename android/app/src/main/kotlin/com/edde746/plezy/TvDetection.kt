@@ -20,6 +20,7 @@ object TvDetection {
 
     @Suppress("DEPRECATION")
     return uiModeType == Configuration.UI_MODE_TYPE_TELEVISION ||
+      (context.getSystemService(Context.UI_MODE_SERVICE) as? android.app.UiModeManager)?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION ||
       pm.hasSystemFeature(PackageManager.FEATURE_TELEVISION) ||
       pm.hasSystemFeature(PackageManager.FEATURE_LEANBACK) ||
       pm.hasSystemFeature("amazon.hardware.fire_tv") ||

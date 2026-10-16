@@ -1496,8 +1496,10 @@ class _FocusableTextInputHostState extends State<_FocusableTextInputHost> with W
 /// Collapsed selection only: if text is selected, LEFT/RIGHT fall through
 /// to the TextField's default caret movement.
 class FocusableTextField extends _FocusableTextInputBase {
+  final Iterable<String>? autofillHints;
   const FocusableTextField({
     super.key,
+    this.autofillHints,
     required super.controller,
     super.focusNode,
     super.decoration,
@@ -1547,6 +1549,7 @@ class FocusableTextField extends _FocusableTextInputBase {
         activateNativeTextInput: activateNativeTextInput,
       );
       return TextField(
+        autofillHints: autofillHints,
         controller: controller,
         focusNode: focusNode,
         enabled: enabled,

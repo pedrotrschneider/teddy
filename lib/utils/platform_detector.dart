@@ -49,6 +49,18 @@ AndroidTvFeatureDetection detectAndroidTvFromSystemFeatures(Iterable<String> fea
   );
 }
 
+/// Keep independent positive TV signals even if one Android bridge reports
+/// a false negative. Automotive remains an authoritative exclusion.
+AndroidTvFeatureDetection resolveAndroidTvDetection(AndroidTvFeatureDetection? native, Iterable<String> features) {
+  final fallback = detectAndroidTvFromSystemFeatures(features);
+  final automotive = (native?.isAutomotive ?? false) || fallback.isAutomotive;
+  return AndroidTvFeatureDetection(
+    isTv: !automotive && ((native?.isTv ?? false) || fallback.isTv),
+    isAutomotive: automotive,
+    reasons: {...?native?.reasons, ...fallback.reasons}.toList(),
+  );
+}
+
 /// Whether a floating player may be offered, given the host platform's own
 /// picture-in-picture capability and the detected form factor.
 ///
@@ -97,11 +109,22 @@ class TvDetectionService {
     final deviceInfo = DeviceInfoPlugin();
     if (Platform.isAndroid) {
       final nativeDetection = await _getNativeAndroidTvDetection();
-      final detection =
-          nativeDetection ?? detectAndroidTvFromSystemFeatures((await deviceInfo.androidInfo).systemFeatures);
+      var features = <String>[];
+      try {
+        features = (await deviceInfo.androidInfo).systemFeatures;
+      } on PlatformException {
+        // A working native verdict is sufficient if the fallback plugin fails.
+        if (nativeDetection == null) rethrow;
+      } on MissingPluginException {
+        if (nativeDetection == null) rethrow;
+      }
+      final detection = resolveAndroidTvDetection(nativeDetection, features);
       _detected = detection.isTv;
       _isAutomotive = detection.isAutomotive;
       _detectionReasons = detection.reasons;
+      appLogger.i(
+        'Android form factor: TV=$_detected automotive=$_isAutomotive signals=${_detectionReasons.join(",")}',
+      );
     } else if (Platform.isIOS) {
       if (_tvosBuild) {
         _isAppleTV = true;
@@ -179,6 +202,8 @@ class TvDetectionService {
   ///
   /// App code goes through the [PlatformDetector] facade ([PlatformDetector.isTV]
   /// and siblings); these raw accessors exist for the facade and tests.
+  static bool isAutomaticallyDetectedTV() => _singleton.instance?._detected ?? false;
+
   static bool isTVSync() => _debugAppleTVOverride ?? _singleton.instance?.isTV ?? false;
 
   /// Synchronous Apple TV check (returns false if not initialized or not tvOS).
