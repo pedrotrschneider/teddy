@@ -149,7 +149,10 @@ class _VideoState extends State<Video> {
     if (renderBox == null || !renderBox.hasSize) return;
 
     final position = renderBox.localToGlobal(Offset.zero);
-    final size = renderBox.size;
+    // Both corners must use the ancestor transform. UI scaling changes the
+    // on-screen size too; combining a global origin with a local size would
+    // make the native plane spill outside its Flutter viewport.
+    final end = renderBox.localToGlobal(Offset(renderBox.size.width, renderBox.size.height));
     final dpr = MediaQuery.devicePixelRatioOf(context);
 
     // Rounded outward, the same way the native SetRect biases: it floors the
@@ -162,8 +165,8 @@ class _VideoState extends State<Video> {
     // sends exactly the numbers it sent before.
     final left = (position.dx * dpr).floor();
     final top = (position.dy * dpr).floor();
-    final right = ((position.dx + size.width) * dpr).ceil();
-    final bottom = ((position.dy + size.height) * dpr).ceil();
+    final right = (end.dx * dpr).ceil();
+    final bottom = (end.dy * dpr).ceil();
 
     // Keyed on the four integers actually sent rather than on a logical-pixel
     // tolerance. A sub-logical-pixel move is a real move at scale 2 or 3 -

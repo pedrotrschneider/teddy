@@ -437,6 +437,72 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('season focus reveals complete episode cards with a margin at TV viewport sizes', (tester) async {
+    for (final size in [const Size(960, 540), const Size(1280, 720), const Size(1920, 1080)]) {
+      final client = SeriesDetailFixture();
+      await mount(
+        tester,
+        TedSeasonDetail(
+          client: client,
+          show: client.data(const TedMediaIdentity('series', 'tt4000000')),
+          season: 1,
+          horizontalInset: 36,
+          onClose: () {},
+          onSidebar: () {},
+          onHeader: () {},
+          onEpisode: (_) {},
+        ),
+        client,
+        size: size,
+      );
+      final hub = find.byType(HubSection);
+      final scroll = tester.widget<SingleChildScrollView>(find.byType(SingleChildScrollView).first).controller!;
+      expect(tester.getRect(hub).bottom, lessThanOrEqualTo(size.height - 7));
+      expect(tester.getRect(hub).top, greaterThanOrEqualTo(8));
+      final revealed = scroll.offset;
+      // Returning from lower content restores the most hero that still fits
+      // the whole shelf; horizontal traversal keeps this same vertical offset.
+      scroll.jumpTo(scroll.position.maxScrollExtent);
+      tester.state<HubSectionState>(hub).requestFocusAt(1);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
+      await tester.pumpAndSettle();
+      expect(scroll.offset, closeTo(revealed, .01));
+      expect(tester.getRect(hub).bottom, lessThanOrEqualTo(size.height - 7));
+      expect(tester.takeException(), isNull);
+    }
+  });
+
+  testWidgets('a deferred episode reveal cannot scroll after switching to pointer input', (tester) async {
+    final client = SeriesDetailFixture();
+    await mount(
+      tester,
+      TedSeasonDetail(
+        client: client,
+        show: client.data(const TedMediaIdentity('series', 'tt4000000')),
+        season: 1,
+        horizontalInset: 36,
+        onClose: () {},
+        onSidebar: () {},
+        onHeader: () {},
+        onEpisode: (_) {},
+      ),
+      client,
+      size: const Size(960, 540),
+    );
+    final hub = tester.state<HubSectionState>(find.byType(HubSection));
+    final scroll = tester.widget<SingleChildScrollView>(find.byType(SingleChildScrollView).first).controller!;
+    scroll.jumpTo(scroll.position.maxScrollExtent);
+    hub.requestFocusAt(1);
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: const Offset(10, 10));
+    await mouse.moveTo(const Offset(20, 20));
+    final before = scroll.offset;
+    await tester.pumpAndSettle();
+    expect(InputModeTracker.currentMode, InputMode.pointer);
+    expect(scroll.offset, before);
+    await mouse.removePointer();
+  });
+
   testWidgets('show and season pointer hover or pointer focus never reveals the banner; keyboard focus does', (
     tester,
   ) async {

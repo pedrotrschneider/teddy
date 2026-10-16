@@ -148,35 +148,51 @@ void main() {
     SettingsService.resetForTesting();
   });
 
-  for (final hardware in [true, false]) {
-    test('Mac startup respects decoding=$hardware and keeps read-ahead independent of initial buffering', () async {
-      debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
-      final settings = await SettingsService.getInstance();
-      await settings.write(SettingsService.enableHardwareDecoding, hardware);
-      final f = ControlFixture();
-      try {
-        await withMockPlayerChannels(
-          methodChannelName: 'com.plezy/mpv_player',
-          eventChannelName: 'com.plezy/mpv_player/events',
-          methodHandler: f.method,
-          testBody: () async {
-            await f.open();
-            final properties = {
-              for (final call in f.calls.where((c) => c.method == 'setProperty'))
-                (call.arguments as Map)['name']: (call.arguments as Map)['value'],
-            };
-            expect(properties['hwdec'], hardware ? 'videotoolbox' : 'no');
-            expect(properties['cache-pause-initial'], 'no');
-            expect(properties['cache-pause-wait'], '0.5');
-            expect(properties.containsKey('demuxer-max-bytes'), false);
-            expect(properties.containsKey('cache-secs'), false);
-            await f.close();
-          },
-        );
-      } finally {
-        debugDefaultTargetPlatformOverride = null;
-      }
-    });
+  for (final platform in [TargetPlatform.macOS, TargetPlatform.android]) {
+    for (final hardware in [true, false]) {
+      test(
+        '$platform startup respects decoding=$hardware and keeps read-ahead independent of initial buffering',
+        () async {
+          debugDefaultTargetPlatformOverride = platform;
+          final settings = await SettingsService.getInstance();
+          await settings.write(SettingsService.enableHardwareDecoding, hardware);
+          final f = ControlFixture();
+          try {
+            await withMockPlayerChannels(
+              methodChannelName: 'com.plezy/mpv_player',
+              eventChannelName: 'com.plezy/mpv_player/events',
+              methodHandler: f.method,
+              testBody: () async {
+                await f.open();
+                final properties = {
+                  for (final call in f.calls.where((c) => c.method == 'setProperty'))
+                    (call.arguments as Map)['name']: (call.arguments as Map)['value'],
+                };
+                expect(
+                  properties['hwdec'],
+                  hardware ? (platform == TargetPlatform.android ? 'mediacodec' : 'videotoolbox') : 'no',
+                );
+                final decoderWrite = f.calls.indexWhere(
+                  (c) => c.method == 'setProperty' && (c.arguments as Map)['name'] == 'hwdec',
+                );
+                final open = f.calls.indexWhere(
+                  (c) => c.method == 'command' && ((c.arguments as Map)['args'] as List).first == 'loadfile',
+                );
+                expect(open, greaterThanOrEqualTo(0));
+                expect(decoderWrite, lessThan(open), reason: 'Select the decoder before opening the source');
+                expect(properties['cache-pause-initial'], 'no');
+                expect(properties['cache-pause-wait'], '0.5');
+                expect(properties.containsKey('demuxer-max-bytes'), false);
+                expect(properties.containsKey('cache-secs'), false);
+                await f.close();
+              },
+            );
+          } finally {
+            debugDefaultTargetPlatformOverride = null;
+          }
+        },
+      );
+    }
   }
 
   test('short status video and its EOF never generate watch reports or completion', () async {

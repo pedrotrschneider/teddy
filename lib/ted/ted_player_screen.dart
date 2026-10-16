@@ -89,7 +89,11 @@ class _TeddyPlayerState extends State<TeddyPlayer> {
 
   late final _playback = TedPlayback(
     widget.client,
-    widget.player ?? Player(),
+    widget.player ??
+        Player(
+          useExoPlayer: prefs.SettingsService.instance.read(prefs.SettingsService.useExoPlayer),
+          hardwareDecoding: prefs.SettingsService.instance.read(prefs.SettingsService.enableHardwareDecoding),
+        ),
     widget.session,
     journal: widget.journal,
     offline: widget.offline,

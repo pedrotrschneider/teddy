@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:plezy/theme/mono_theme.dart';
@@ -112,10 +113,13 @@ void main() {
       expect(settings.read(SettingsService.teddyStartupSection), TeddySection.home);
       expect(settings.read(SettingsService.teddyDownloadChunkMiB), 512);
       expect(settings.read(SettingsService.teddyMaxSimultaneousDownloads), 1);
+      expect(settings.read(SettingsService.teddyUiScalePercent), 100);
       await settings.write(SettingsService.teddyStartupSection, TeddySection.downloads);
       await settings.write(SettingsService.teddyAutoPlayNextEpisode, true);
       await settings.write(SettingsService.teddyDownloadChunkMiB, 1024);
       await settings.write(SettingsService.teddyMaxSimultaneousDownloads, 3);
+      await settings.write(SettingsService.teddyUiScalePercent, 75);
+      await settings.write(SettingsService.useExoPlayer, true);
       await settings.write(SettingsService.introPattern, 'custom-opening');
       await settings.write(SettingsService.startInFullscreen, true);
       await settings.prefs.setString('private_fixture_token', 'preserve');
@@ -128,6 +132,8 @@ void main() {
       expect(settings.read(SettingsService.startInFullscreen), false);
       expect(settings.read(SettingsService.teddyDownloadChunkMiB), 512);
       expect(settings.read(SettingsService.teddyMaxSimultaneousDownloads), 1);
+      expect(settings.read(SettingsService.teddyUiScalePercent), 100);
+      expect(settings.read(SettingsService.useExoPlayer), false);
       expect(settings.prefs.getString('private_fixture_token'), 'preserve');
       await SettingsExportService.applyImportMap(exported, settings.prefs, currentUserUuid: 'teddy');
       settings.refreshListenables();
@@ -135,6 +141,8 @@ void main() {
       expect(settings.read(SettingsService.teddyAutoPlayNextEpisode), true);
       expect(settings.read(SettingsService.teddyDownloadChunkMiB), 1024);
       expect(settings.read(SettingsService.teddyMaxSimultaneousDownloads), 3);
+      expect(settings.read(SettingsService.teddyUiScalePercent), 75);
+      expect(settings.read(SettingsService.useExoPlayer), true);
       expect(settings.read(SettingsService.introPattern), 'custom-opening');
     },
   );
@@ -170,6 +178,25 @@ void main() {
     expect(await store.savedMode(), isFalse);
     expect(find.byType(TeddySettingsScreen), findsNothing);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('Android exposes the bundled video backend selection and saves the choice', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    try {
+      await mount(tester, () {});
+      await tester.scrollUntilVisible(find.text('Android video player'), 250, scrollable: find.byType(Scrollable).last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Android video player'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('ExoPlayer'));
+      await tester.pumpAndSettle();
+      expect(SettingsService.instance.read(SettingsService.useExoPlayer), true);
+      expect(find.text('ExoPlayer. Applies to the next video.'), findsOneWidget);
+      expect(find.textContaining('MPV only; ExoPlayer selects decoders automatically.'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    } finally {
+      debugDefaultTargetPlatformOverride = null;
+    }
   });
 
   testWidgets('a failed save keeps the current layout, reports failure and allows retry', (tester) async {

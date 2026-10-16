@@ -711,6 +711,11 @@ class SettingsService extends BaseSharedPreferencesService {
   static const resumeMusicOnLaunch = BoolPref('resume_music_on_launch', defaultValue: true);
   static const autoPlayNextEpisode = BoolPref('auto_play_next_episode', defaultValue: true);
   static const teddyUpdateChannel = StringPref('teddy_update_channel', defaultValue: 'stable');
+  static final teddyUiScalePercent = IntPref(
+    'teddy_ui_scale_percent',
+    defaultValue: 100,
+    transform: (v) => v.clamp(50, 150),
+  );
   static const teddyAutoPlayNextEpisode = BoolPref('teddy_auto_play_next_episode');
   static const teddyStartupSection = EnumPref<TeddySection>(
     'teddy_startup_section',
@@ -1414,6 +1419,7 @@ class SettingsService extends BaseSharedPreferencesService {
     teddyDownloadChunkMiB,
     teddyMaxSimultaneousDownloads,
     teddyUpdateChannel,
+    teddyUiScalePercent,
     playNextCountdown,
     shuffleStartsFromBeginning,
     gestureBrightnessSwipe,
@@ -1555,6 +1561,7 @@ class SettingsService extends BaseSharedPreferencesService {
     'seek_time_small' || 'seek_time_large' => (1, 120),
     'teddy_download_chunk_mib' => (8, 2048),
     'teddy_max_simultaneous_downloads' => (1, 10),
+    'teddy_ui_scale_percent' => (50, 150),
     'rewind_on_resume' || 'display_switch_delay' => (0, 10),
     'sleep_timer_duration' => (5, 240),
     'play_next_countdown' => (0, 30),

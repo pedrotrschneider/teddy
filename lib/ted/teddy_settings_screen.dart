@@ -2,6 +2,7 @@ import 'teddy_update_settings.dart';
 import 'ted_version.dart';
 import 'dart:async';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
@@ -26,6 +27,8 @@ import '../widgets/setting_tile.dart';
 import 'ted_downloads.dart';
 import 'teddy_settings_actions.dart';
 import 'teddy_logs.dart';
+
+String _androidPlayerLabel(bool exo) => '${exo ? "ExoPlayer" : "MPV (default)"}. Applies to the next video.';
 
 class TeddySettingsScreen extends StatefulWidget {
   final VoidCallback onLayoutRestart;
@@ -287,6 +290,16 @@ class TeddySettingsScreenState extends State<TeddySettingsScreen> {
           const SettingsSectionHeader('Appearance'),
           SettingsGroup(
             children: [
+              SettingSelectionTile<int>(
+                pref: prefs.SettingsService.teddyUiScalePercent,
+                icon: Icons.zoom_out_map,
+                title: 'UI scale',
+                subtitleBuilder: (value) => '$value%${value == 100 ? " (default)" : ""}',
+                options: [
+                  for (final percent in [50, 60, 70, 75, 80, 90, 100, 110, 125, 150])
+                    DialogOption(value: percent, title: '$percent%${percent == 100 ? " (default)" : ""}'),
+                ],
+              ),
               SettingSelectionTile<prefs.ThemeMode>(
                 pref: prefs.SettingsService.themeMode,
                 icon: Icons.palette_outlined,
@@ -317,7 +330,25 @@ class TeddySettingsScreenState extends State<TeddySettingsScreen> {
           const SettingsSectionHeader('Video Playback'),
           SettingsGroup(
             children: [
-              _switch(prefs.SettingsService.enableHardwareDecoding, 'Hardware Decoding', Icons.memory),
+              if (defaultTargetPlatform == TargetPlatform.android)
+                const SettingSelectionTile<bool>(
+                  pref: prefs.SettingsService.useExoPlayer,
+                  icon: Icons.video_settings,
+                  title: 'Android video player',
+                  subtitleBuilder: _androidPlayerLabel,
+                  options: [
+                    DialogOption(value: false, title: 'MPV (default)'),
+                    DialogOption(value: true, title: 'ExoPlayer'),
+                  ],
+                ),
+              _switch(
+                prefs.SettingsService.enableHardwareDecoding,
+                'Hardware Decoding',
+                Icons.memory,
+                subtitle: defaultTargetPlatform == TargetPlatform.android
+                    ? 'MPV only; ExoPlayer selects decoders automatically. Applies to the next video.'
+                    : 'Applies to the next video.',
+              ),
               _number(prefs.SettingsService.seekTimeSmall, 'Small skip duration', Icons.replay_10),
               _number(prefs.SettingsService.seekTimeLarge, 'Large skip duration', Icons.forward_30),
               _number(prefs.SettingsService.rewindOnResume, 'Rewind on resume', Icons.replay),

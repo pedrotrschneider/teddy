@@ -22,6 +22,39 @@ import 'ted_presentation.dart';
 import 'ted_downloads.dart';
 import 'ted_download_button.dart';
 
+void _revealDetailShelf(HubSectionState? hub) {
+  if (hub == null ||
+      !hub.mounted ||
+      !hub.hasFocus ||
+      InputModeTracker.currentMode != InputMode.keyboard ||
+      ModalRoute.of(hub.context)?.isCurrent == false) {
+    return;
+  }
+  final scroll = Scrollable.maybeOf(hub.context);
+  final shelf = hub.context.findRenderObject();
+  final viewport = scroll?.context.findRenderObject();
+  if (scroll == null ||
+      shelf is! RenderBox ||
+      viewport is! RenderBox ||
+      !shelf.attached ||
+      !viewport.attached ||
+      !shelf.hasSize ||
+      !viewport.hasSize ||
+      !scroll.position.hasContentDimensions) {
+    return;
+  }
+  // Reveal as much of the hero as possible while keeping the complete row,
+  // including captions and focus chrome, above a small bottom margin.
+  final bottom = shelf.localToGlobal(Offset(0, shelf.size.height), ancestor: viewport).dy;
+  final position = scroll.position;
+  final target = (position.pixels + bottom - viewport.size.height + 8).clamp(
+    position.minScrollExtent,
+    position.maxScrollExtent,
+  );
+  if ((target - position.pixels).abs() < 1) return;
+  unawaited(position.animateTo(target, duration: const Duration(milliseconds: 200), curve: Curves.easeOutCubic));
+}
+
 class TedSeriesDetail extends StatefulWidget {
   final TedClient client;
   final TedTitle initial;
@@ -90,35 +123,7 @@ class TedSeriesDetailState extends State<TedSeriesDetail> {
     _seasonsRevealPending = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _seasonsRevealPending = false;
-      final hub = _seasons.currentState;
-      if (!mounted ||
-          InputModeTracker.currentMode != InputMode.keyboard ||
-          hub == null ||
-          !hub.hasFocus ||
-          ModalRoute.of(context)?.isCurrent == false) {
-        return;
-      }
-      final scroll = Scrollable.maybeOf(hub.context);
-      final shelf = hub.context.findRenderObject();
-      final viewport = scroll?.context.findRenderObject();
-      if (scroll == null ||
-          shelf is! RenderBox ||
-          viewport is! RenderBox ||
-          !shelf.hasSize ||
-          !viewport.hasSize ||
-          !scroll.position.hasContentDimensions) {
-        return;
-      }
-      // This inset row has no Home shelf gap to subtract. Keep the greatest
-      // visible portion of the banner with the full cards/captions above the edge.
-      final bottom = shelf.localToGlobal(Offset(0, shelf.size.height), ancestor: viewport).dy;
-      final position = scroll.position;
-      final target = (position.pixels + bottom - viewport.size.height + 8).clamp(
-        position.minScrollExtent,
-        position.maxScrollExtent,
-      );
-      if ((target - position.pixels).abs() < 1) return;
-      unawaited(position.animateTo(target, duration: const Duration(milliseconds: 200), curve: Curves.easeOutCubic));
+      if (mounted) _revealDetailShelf(_seasons.currentState);
     });
   }
 
@@ -410,6 +415,7 @@ class TedSeasonDetailState extends State<TedSeasonDetail> {
   int? _after;
   int _generation = 0;
   bool _loading = false, _more = false, _working = false, _focusOnLoad = true;
+  bool _episodesRevealPending = false;
   String _lane = 'episodes';
   late bool _initialSelectionPending = widget.initialEpisode != null;
   String? _error;
@@ -433,6 +439,15 @@ class TedSeasonDetailState extends State<TedSeasonDetail> {
       return true;
     }
     return false;
+  }
+
+  void _revealEpisodes() {
+    if (_episodesRevealPending) return;
+    _episodesRevealPending = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _episodesRevealPending = false;
+      if (mounted) _revealDetailShelf(_episodes.currentState);
+    });
   }
 
   @override
@@ -732,7 +747,7 @@ class TedSeasonDetailState extends State<TedSeasonDetail> {
                 onItemLongPress: (_) {},
                 onFocusedItemChanged: (_) {
                   _lane = 'episodes';
-                  _top();
+                  _revealEpisodes();
                 },
                 onNearEnd: () => unawaited(_loadMore()),
                 onBack: widget.onClose,

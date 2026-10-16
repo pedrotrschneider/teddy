@@ -46,6 +46,8 @@ Right from sidebar restores the remembered media section, not filters or always 
 
 Media/person/Settings pages keep sidebar and fixed top-left Back. Episode Back/Escape follows episode→season→show→caller even when opened from Home. Dialogs consume Escape first. Window reactivation must recover keyboard navigation without a mouse click.
 
+Appearance → UI scale adjusts the entire interface immediately from 50% to 150% (default 100%) and remembers the choice. Start with 75% or 80% on a TV where controls/cards look too large. Native video retains the full display resolution. Scale is included in portable settings backup/reset. Episode-row focus keeps full thumbnails and captions visible with a small bottom margin at any selected scale.
+
 ## Details, cast and sources
 
 Movie details has resume/play, restart, download and watched actions with RD/Stremio source controls. Show details has download/watch actions and first-focus season cards (Specials last). Season has download/watch actions and episode thumbnails; title is prominent, episode tuple smaller, then release date. Episode combines the show hero/logo with episode art/description and movie-style play actions. Every media detail has release date. Keyboard focus on action rows reveals the hero; season focus reveals full cards.
@@ -59,6 +61,8 @@ Favorites then Recent take precedence; shared recent retains three and matches b
 ## Player
 
 TV controls are larger, centered with right controls vertically aligned. One seekbar style, round focused thumb, no chapter-jump/aspect-ratio buttons. Left/right enters and seeks on timeline; Down focuses pause. Mouse movement reveals controls without keyboard focus transfer. Cursor hides when idle over video, windowed or fullscreen. Skip intro/credits prompts stay clear of timeline. Popups work with keyboard/mouse; Escape closes a popup or leaves playback.
+
+Android defaults to MPV with direct MediaCodec hardware decoding into the native video surface. Keep Hardware Decoding enabled for supported 4K media. Video Playback → Android video player also offers the bundled ExoPlayer; decoder/backend changes take effect on the next video. The Hardware Decoding toggle controls MPV; ExoPlayer selects decoders automatically. After installing a build containing the October 16 Chromecast fixes, compare the same 4K source with hardware decoding enabled, then try ExoPlayer if MPV still stutters. Check motion, seeking, subtitles and HDR on the actual device; host Flutter tests cannot establish decoder throughput or display cadence.
 
 Buffering pulses the media logo. Resume/unbuffered seeking must not trigger natural completion or retain imaginary buffered ranges. Next marks the current episode watched explicitly, navigates target details first and uses matching RD strategy or unique add-on/binge group; otherwise the target waits for selection. Download adjacency requires available local targets. Autoplay defaults off.
 

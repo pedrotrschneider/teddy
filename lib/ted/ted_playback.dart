@@ -240,7 +240,15 @@ class TedPlayback extends ChangeNotifier {
       final hardware = settings.read(SettingsService.enableHardwareDecoding);
       await player.setProperty(
         'hwdec',
-        hardware ? (defaultTargetPlatform == TargetPlatform.macOS ? 'videotoolbox' : 'auto-safe') : 'no',
+        hardware
+            ? switch (defaultTargetPlatform) {
+                // auto-safe excludes direct MediaCodec and can pick the
+                // copy-back decoder, defeating Android's native video plane.
+                TargetPlatform.android => 'mediacodec',
+                TargetPlatform.macOS => 'videotoolbox',
+                _ => 'auto-safe',
+              }
+            : 'no',
       );
       if (player.playerType == 'mpv') {
         // Read-ahead capacity is independent of the threshold for resuming

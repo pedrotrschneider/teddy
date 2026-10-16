@@ -40,6 +40,7 @@ import 'ted/ted_app_shutdown.dart';
 import 'ted/ted_focus_recovery.dart';
 import 'ted/ted_episode_navigation.dart';
 import 'ted/ted_season_source.dart';
+import 'ted/teddy_ui_scale.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -186,7 +187,9 @@ class _TeddyAppState extends State<TeddyApp> {
         child: MaterialApp(
           title: 'Teddy',
           navigatorObservers: [_focusRoutes, _backKeys],
-          builder: (context, child) => TedFocusRecovery(routes: _focusRoutes, child: child!),
+          builder: (context, child) => TeddyUiScale(
+            child: TedFocusRecovery(routes: _focusRoutes, child: child!),
+          ),
           theme: monoTheme(dark: false),
           darkTheme: monoTheme(dark: true, oled: mode == prefs.ThemeMode.oled),
           themeMode: switch (mode) {
