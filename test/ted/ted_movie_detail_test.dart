@@ -40,6 +40,7 @@ const addonPage = TedSourcePage(
 );
 
 class MovieFixture extends CatalogBrowseFixture {
+  TedSourcePage sourcePage = addonPage;
   bool mapped = true, failSources = false;
   bool queuedMetadata = false;
   List<Map<String, dynamic>> credits = [];
@@ -51,7 +52,15 @@ class MovieFixture extends CatalogBrowseFixture {
     ...titleData(kind: media.kind, id: media.id, ready: mapped, played: played),
     'enrichment': {
       ...metadataData(status: queuedMetadata ? 'queued' : 'ready'),
-      'item': <String, dynamic>{...metadataData()['item'], 'People': queuedMetadata ? [] : credits},
+      'item': <String, dynamic>{
+        ...metadataData()['item'],
+        'Type': media.kind == 'episode'
+            ? 'Episode'
+            : media.kind == 'series'
+            ? 'Series'
+            : 'Movie',
+        'People': queuedMetadata ? [] : credits,
+      },
     },
   });
   @override
@@ -82,7 +91,7 @@ class MovieFixture extends CatalogBrowseFixture {
   }) async {
     sourceReads++;
     if (failSources) throw const TedFailure('addon_unavailable');
-    return heldSources?.future ?? addonPage;
+    return heldSources?.future ?? sourcePage;
   }
 }
 
@@ -154,6 +163,70 @@ void main() {
 
   Finder getPlay() => find.descendant(of: find.byType(TedPlayButton), matching: find.byType(FilledButton));
   Finder provider() => find.byType(DropdownButtonFormField<String>);
+  for (final kind in ['movie', 'episode']) {
+    testWidgets('$kind entry waits for Play and player return focuses Play instead of the previous action', (
+      tester,
+    ) async {
+      plays.clear();
+      final client = MovieFixture()..heldMapping = Completer<TedSourcePage>();
+      addTearDown(client.auth.close);
+      (await TvDetectionService.getInstance()).setForceTv(true);
+      tester.view.physicalSize = const Size(1512, 950);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final nav = GlobalKey<NavigatorState>();
+      final media = TedMediaIdentity(kind, kind == 'episode' ? 'tt4000000:1:1' : 'tt4000000');
+      await tester.pumpWidget(
+        InputModeTracker(
+          child: MaterialApp(
+            navigatorKey: nav,
+            theme: monoTheme(dark: true),
+            builder: (context, child) =>
+                MediaQuery(data: MediaQuery.of(context).copyWith(disableAnimations: true), child: child!),
+            home: Scaffold(
+              body: TedMovieDetail(
+                client: client,
+                initial: client.data(media),
+                horizontalInset: 24,
+                onClose: () {},
+                onSidebar: () {},
+                onHeader: () {},
+                onPlay: (_, _, _) async {
+                  await nav.currentState!.push<void>(
+                    MaterialPageRoute(
+                      builder: (context) => Scaffold(
+                        body: TextButton(
+                          autofocus: true,
+                          onPressed: () => Navigator.pop(context),
+                          child: const Text('Close player'),
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(tester.widget<FilledButton>(getPlay()).onPressed, isNull);
+      client.heldMapping!.complete(const TedSourcePage(true, true, [], [], null));
+      await tester.pumpAndSettle();
+      expect(focused(getPlay()), true);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pumpAndSettle();
+      expect(focused(find.text('Start from the beginning')), true);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(find.text('Close player'), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(focused(getPlay()), true);
+      expect(tester.takeException(), isNull);
+    });
+  }
   final cast = [
     {'Id': firstSource, 'Name': 'First Actor', 'Type': 'Actor', 'Role': 'Lead'},
     {'Id': secondSource, 'Name': 'Second Actor', 'Type': 'Actor', 'Role': 'Support'},
@@ -515,6 +588,129 @@ void main() {
     await tester.tap(find.byType(TedPlayButton).first);
     await tester.pumpAndSettle();
     expect(plays.last.$1, firstSource);
+  });
+  for (final kind in ['movie', 'episode']) {
+    testWidgets('$kind details allows source selection and playback during partial-source recovery', (tester) async {
+      plays.clear();
+      final choices = [
+        TedSourceChoice(firstSource, 'First add-on', 'First release', '', sourceKey: 'c' * 64),
+        TedSourceChoice(secondSource, 'First add-on', 'Second release', '', sourceKey: 'd' * 64),
+      ];
+      final client = MovieFixture()
+        ..mapped = false
+        ..sourcePage = TedSourcePage(
+          false,
+          false,
+          choices,
+          [],
+          null,
+          lookupUnavailable: true,
+          unavailableAddons: {'a' * 64},
+        );
+      addTearDown(client.auth.close);
+      (await TvDetectionService.getInstance()).setForceTv(true);
+      tester.view.physicalSize = const Size(1512, 950);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final media = TedMediaIdentity(kind, kind == 'episode' ? 'tt4000000:1:1' : 'tt4000000');
+      await tester.pumpWidget(
+        InputModeTracker(
+          child: MaterialApp(
+            theme: monoTheme(dark: true),
+            builder: (context, child) =>
+                MediaQuery(data: MediaQuery.of(context).copyWith(disableAnimations: true), child: child!),
+            home: Scaffold(
+              body: TedMovieDetail(
+                client: client,
+                initial: client.data(media),
+                onPlay: (_, source, _) async => plays.add((source, false)),
+                onClose: () {},
+                onSidebar: () {},
+                onHeader: () {},
+                horizontalInset: 24,
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(client.sourceReads, 1);
+      expect(find.text('First release'), findsOneWidget);
+      client.heldSources = Completer<TedSourcePage>();
+      await tester.pump(const Duration(seconds: 1));
+      await tester.pump();
+      expect(client.sourceReads, 2, reason: 'Partial failures still retry');
+      expect(tester.widget<FilledButton>(getPlay()).onPressed, isNotNull);
+      await tester.tap(getPlay());
+      await tester.pumpAndSettle();
+      expect(plays.last.$1, firstSource, reason: 'Playback starts before the held retry completes');
+      expect(client.sourceReads, 2);
+      final menu = find.byKey(const ValueKey('movie-source-file'));
+      expect(tester.widget<OutlinedButton>(menu).onPressed, isNotNull);
+      expect(find.byWidgetPredicate((w) => w is LinearProgressIndicator && w.value == null), findsNothing);
+      expect(find.text('Loading sources…'), findsNothing);
+      await tester.tap(menu);
+      await tester.pumpAndSettle();
+      expect(find.text('Second release'), findsOneWidget);
+      // A successful retry renews handles while the old picker stays open.
+      const renewedSecond = '44444444-4444-4444-8444-444444444444';
+      client.heldSources!.complete(
+        TedSourcePage(
+          false,
+          false,
+          [
+            TedSourceChoice(
+              '33333333-3333-4333-8333-333333333333',
+              'First add-on',
+              'First release',
+              '',
+              sourceKey: 'c' * 64,
+            ),
+            TedSourceChoice(renewedSecond, 'First add-on', 'Second release', '', sourceKey: 'd' * 64),
+          ],
+          [],
+          null,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Second release').last);
+      await tester.pumpAndSettle();
+      expect(find.text('Second release'), findsOneWidget);
+      await tester.tap(getPlay());
+      await tester.pumpAndSettle();
+      expect(plays.last.$1, renewedSecond, reason: 'The explicit release survives background handle renewal');
+      await tester.pump(const Duration(seconds: 10));
+      expect(client.sourceReads, 2, reason: 'A recovered lookup stops retrying');
+      expect(tester.takeException(), isNull);
+    });
+  }
+  testWidgets('a failed background recovery retains playable choices and an accessible source menu', (tester) async {
+    final client = MovieFixture()
+      ..mapped = false
+      ..sourcePage = TedSourcePage(false, false, addonPage.choices, [], null, lookupUnavailable: true);
+    await mount(tester, client, tv: true);
+    await tester.pumpAndSettle();
+    client.heldSources = Completer<TedSourcePage>();
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+    expect(client.sourceReads, 2);
+    client.heldSources!.completeError(const TedFailure('addon_unavailable'));
+    await tester.pump();
+    await tester.pump();
+    final menu = find.byKey(const ValueKey('movie-source-file'));
+    expect(tester.widget<OutlinedButton>(menu).onPressed, isNotNull);
+    await tester.tap(menu);
+    await tester.pumpAndSettle();
+    expect(find.text('Second release'), findsOneWidget);
+    expect(client.sourceReads, 2, reason: 'Opening usable cached choices does not start another blocking lookup');
+    await tester.tap(find.text('Second release').last);
+    await tester.pumpAndSettle();
+    expect(tester.widget<FilledButton>(getPlay()).onPressed, isNotNull);
+    await tester.tap(getPlay());
+    await tester.pumpAndSettle();
+    expect(plays.last.$1, secondSource);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
   });
   testWidgets('leaving details cancels its scheduled provider recovery', (tester) async {
     final client = MovieFixture()

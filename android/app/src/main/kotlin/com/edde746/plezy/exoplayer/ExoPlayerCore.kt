@@ -1306,20 +1306,15 @@ class ExoPlayerCore(private val activity: Activity) :
     // same request and fail identically, so skip the fallback (and its
     // "switching to compatible player" toast) and report the status instead.
     // Keep these tags in sync with PlayerError.serverHttp500/404 in Dart.
-    val httpStatus = resolveHttpStatus(error, causeChain)
-    val statusCause = when (httpStatus) {
-      // Shared-user bandwidth/transcoding limit rejection set by the server owner.
-      500 -> "server-http-500"
-      // The server resolved the item but cannot read the file behind it.
-      404 -> "server-http-404"
-      else -> null
-    }
-    if (statusCause != null) {
-      Log.w(TAG, "Server returned HTTP $httpStatus - skipping MPV fallback (unrecoverable until server-side change)")
+    val httpFailure = PlaybackHttpFailure.fromStatus(resolveHttpStatus(error, causeChain))
+    if (httpFailure != null) {
+      // Reopening credentials or transport belongs to TED's pinned-session
+      // recovery. A network/auth error must never switch the decoder backend.
+      Log.w(TAG, "Server returned HTTP ${httpFailure.status} - skipping format fallback")
       emitPlaybackErrorOnce(
         mediaGeneration,
-        error.message ?: "HTTP $httpStatus",
-        cause = statusCause
+        httpFailure.message,
+        cause = httpFailure.cause
       )
       return
     }

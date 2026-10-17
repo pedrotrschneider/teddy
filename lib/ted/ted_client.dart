@@ -523,18 +523,53 @@ class TedClient {
     if (sourceId != null && !tedUuid(sourceId)) throw const TedFailure('invalid_response');
     final started = Stopwatch()..start();
     final preparation = _preparations.remove(sourceId);
-    if (preparation != null) await preparation.consume(abortTrigger: abortTrigger);
-    final session = TedPlaybackSession.fromJson(
-      await auth.json(
-        'POST',
-        '/api/client/v1/playback/sessions',
-        abortTrigger: abortTrigger,
-        body: {'media': media.toJson(), 'source_id': ?sourceId, if (fromBeginning) 'start_from_beginning': true},
-      ),
-      media,
-    );
-    appLogger.i('TED session prepared: session=${session.id} elapsed_ms=${started.elapsedMilliseconds}');
-    return session;
+    var cancelled = false;
+    unawaited(abortTrigger?.then((_) => cancelled = true));
+    final server = auth.server, user = auth.userId;
+    try {
+      if (preparation != null) await preparation.consume(abortTrigger: abortTrigger);
+      for (var attempt = 0; ; attempt++) {
+        if (cancelled || auth.server != server || auth.userId != user) throw const TedFailure('sign_in_required');
+        try {
+          final session = TedPlaybackSession.fromJson(
+            await auth.json(
+              'POST',
+              '/api/client/v1/playback/sessions',
+              abortTrigger: abortTrigger,
+              body: {'media': media.toJson(), 'source_id': ?sourceId, if (fromBeginning) 'start_from_beginning': true},
+            ),
+            media,
+          );
+          appLogger.i(
+            'TED session prepared: media=${media.kind}/${media.id} session=${session.id} '
+            'attempt=${attempt + 1} elapsed_ms=${started.elapsedMilliseconds}',
+          );
+          return session;
+        } on TedFailure catch (failure) {
+          appLogger.w(
+            'TED session attempt failed: media=${media.kind}/${media.id} attempt=${attempt + 1} '
+            'code=${failure.code} elapsed_ms=${started.elapsedMilliseconds} cancelled=$cancelled',
+          );
+          if (cancelled ||
+              attempt >= 3 ||
+              !const {
+                'unavailable',
+                'rd_unavailable',
+                'source_unavailable',
+                'source_preparation_unavailable',
+              }.contains(failure.code)) {
+            rethrow;
+          }
+          await Future.any<void>([Future<void>.delayed(Duration(milliseconds: 250 * (attempt + 1))), ?abortTrigger]);
+        }
+      }
+    } catch (error) {
+      appLogger.w(
+        'TED session failed: media=${media.kind}/${media.id} '
+        'code=${error is TedFailure ? error.code : "invalid_response"} elapsed_ms=${started.elapsedMilliseconds}',
+      );
+      rethrow;
+    }
   }
 
   Future<String> setSourceFavorite(String id, bool favorite) async {
@@ -566,6 +601,7 @@ class TedClient {
         final cached = await sourceCache!.read(scope, media);
         if (cached != null) return TedSourcePage.fromJson(cached, media);
       }
+      final started = Stopwatch()..start();
       final raw = await auth.json(
         'POST',
         '/api/client/v1/playback/sources',
@@ -577,6 +613,10 @@ class TedClient {
         },
       );
       final page = TedSourcePage.fromJson(raw, media);
+      appLogger.i(
+        'TED sources loaded: media=${media.kind}/${media.id} elapsed_ms=${started.elapsedMilliseconds} '
+        'choices=${page.choices.length} partial=${page.lookupUnavailable}',
+      );
       if (_sourceScope == scope) await sourceCache?.write(scope, media, raw);
       return page;
     }();

@@ -28,6 +28,7 @@ import 'package:plezy/widgets/media_card.dart';
 import 'package:plezy/widgets/hub_section.dart';
 import 'package:plezy/widgets/navigation_rail_item.dart';
 import '../test_helpers/prefs.dart';
+import '../test_helpers/subtitle_fonts.dart';
 import 'ted_catalog_test.dart' show titleData;
 import 'ted_home_banner_test.dart' show pixel;
 import 'ted_metadata_client_test.dart' show metadataData;
@@ -217,6 +218,7 @@ class EpisodeCastFixture extends SeriesDetailFixture {
 }
 
 void main() {
+  setUpAll(prepareSubtitleFonts);
   setUpAll(() async {
     await (FontLoader('Go Noto Current')..addFont(rootBundle.load('assets/go-noto-current-regular.ttf'))).load();
   });

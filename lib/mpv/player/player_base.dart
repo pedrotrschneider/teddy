@@ -1437,6 +1437,9 @@ abstract class PlayerBase with PlayerStreamControllersMixin implements Player {
       if (fontDir != null) {
         await setProperty('sub-fonts-dir', fontDir);
         await setProperty('sub-font', SubtitleFontLoader.fontName);
+        appLogger.i('Subtitle fonts configured: backend=$playerType bundled_fonts=${SubtitleFontLoader.fonts.length}');
+      } else {
+        appLogger.w('Subtitle fonts unavailable: backend=$playerType text subtitles may not render');
       }
     } catch (e) {
       // Font configuration is not critical - continue without it

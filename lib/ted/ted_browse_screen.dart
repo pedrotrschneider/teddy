@@ -861,7 +861,14 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
     if (_details.isEmpty) _sidebarReturnStop = _movieReturnStop;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       closed.scope.dispose();
-      if (mounted) _focusMain(fromSidebar: true);
+      if (mounted) {
+        final page = _details.lastOrNull;
+        if (page is _MoviePage) {
+          page.key.currentState?.requestPlayFocus();
+        } else {
+          _focusMain(fromSidebar: true);
+        }
+      }
     });
     if (closed is _MoviePage || closed is _SeriesPage || closed is _SeasonPage) {
       if (_details.isNotEmpty) {
@@ -906,7 +913,7 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
       // enclosing work operation. Restore after that operation's next build.
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted && ModalRoute.of(context)?.isCurrent == true && identical(_details.lastOrNull, page)) {
-          page.requestFocus();
+          page.key.currentState?.requestPlayFocus();
         }
       });
     }

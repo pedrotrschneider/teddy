@@ -7,6 +7,8 @@ import 'package:plezy/ted/ted_browse_screen.dart';
 import 'package:plezy/ted/ted_browse_header.dart';
 import 'package:plezy/ted/ted_home_banner.dart';
 import 'package:plezy/ted/ted_movie_detail.dart';
+import 'package:plezy/ted/ted_play_button.dart';
+import 'package:plezy/ted/ted_source_models.dart';
 import 'package:plezy/ted/teddy_settings_screen.dart';
 import 'package:plezy/ted/ted_series_detail.dart';
 import 'package:plezy/ted/ted_models.dart';
@@ -73,6 +75,11 @@ class KeyboardFixture extends BrowseFixture {
       : movies.firstWhere((t) => t.media == media, orElse: () => movie);
   @override
   Future<TedPersonalPage> personal(String row, {String? after}) async => TedPersonalPage(movies, null, []);
+}
+
+class PlayableKeyboardFixture extends KeyboardFixture {
+  @override
+  Future<TedSourcePage> mappedSource(TedMediaIdentity media) async => const TedSourcePage(true, true, [], [], null);
 }
 
 class SidebarFixture extends KeyboardFixture {
@@ -154,15 +161,19 @@ void main() {
   });
 
   Future<void> settle(WidgetTester tester) async {
-    final play = find.descendant(of: find.byType(TedHomeBanner), matching: find.byType(FilledButton));
-    if (focused(play)) {
-      // A focused Play pill deliberately keeps pulsing. Advance the bounded
-      // navigation/page transition instead of waiting for that pulse to stop.
-      await tester.pump(const Duration(milliseconds: 400));
-      await tester.pump();
-    } else {
-      await tester.pumpAndSettle();
-    }
+    final play = find.descendant(of: find.byType(TedPlayButton), matching: find.byType(FilledButton));
+    final deadline = tester.binding.clock.fromNowBy(const Duration(minutes: 10));
+    do {
+      await tester.pump(const Duration(milliseconds: 100));
+      if (focused(play)) {
+        // Readiness may focus Play during a frame. Its deliberate repeating
+        // pulse cannot settle; only finish the bounded navigation transition.
+        await tester.pump(const Duration(milliseconds: 400));
+        await tester.pump();
+        return;
+      }
+      if (tester.binding.clock.now().isAfter(deadline)) fail('Navigation did not settle');
+    } while (tester.binding.hasScheduledFrame);
   }
 
   Future<void> press(WidgetTester tester, LogicalKeyboardKey key) async {
@@ -1064,7 +1075,7 @@ void main() {
   });
 
   testWidgets('show, season and episode cards and media menus are navigable and restore their caller', (tester) async {
-    await mount(tester, KeyboardFixture());
+    await mount(tester, PlayableKeyboardFixture());
     await press(tester, LogicalKeyboardKey.arrowRight);
     for (var i = 0; i < 3; i++) {
       await press(tester, LogicalKeyboardKey.arrowDown);
@@ -1086,6 +1097,12 @@ void main() {
     expect(focused(find.byType(MediaCard)), true);
     await press(tester, LogicalKeyboardKey.enter);
     expect(tester.widget<TedEpisodeDetail>(find.byType(TedEpisodeDetail)).initial.media.kind, 'episode');
+    expect(focused(find.descendant(of: find.byType(TedPlayButton), matching: find.byType(FilledButton))), true);
+    // The long Restart label wraps at this viewport. Tab follows action order
+    // independently of that geometry and skips the disabled Download action.
+    await press(tester, LogicalKeyboardKey.tab);
+    expect(focused(find.text('Start from the beginning')), true);
+    await press(tester, LogicalKeyboardKey.tab);
     expect(focused(find.text('Mark watched')), true);
     await press(tester, LogicalKeyboardKey.enter);
     expect(find.text('Mark unwatched'), findsOneWidget);

@@ -58,9 +58,14 @@ class SubtitleFontLoader {
   /// process — caching the result skips ~20ms on every subsequent Player
   /// instantiation.
   static Future<String?>? _cachedFontDir;
+  static String? _resolvedFontDir;
 
   static Future<String?> loadSubtitleFont() {
-    return _cachedFontDir ??= _loadSubtitleFontOnce();
+    if (_resolvedFontDir != null) return Future.value(_resolvedFontDir);
+    return _cachedFontDir ??= _loadSubtitleFontOnce().then((directory) {
+      _resolvedFontDir = directory;
+      return directory;
+    });
   }
 
   /// Forget the resolved directory so the next [loadSubtitleFont] re-runs the
@@ -68,6 +73,7 @@ class SubtitleFontLoader {
   @visibleForTesting
   static void resetForTesting() {
     _cachedFontDir = null;
+    _resolvedFontDir = null;
   }
 
   static Future<String?> _loadSubtitleFontOnce() async {

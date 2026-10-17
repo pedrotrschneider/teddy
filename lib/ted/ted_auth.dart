@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
+import '../utils/app_logger.dart';
 import 'ted_credential_store.dart';
 import 'ted_models.dart';
 import 'ted_version.dart';
@@ -282,11 +283,14 @@ class TedAuth {
         : method == 'POST' && path == '/api/client/v1/playback/sources'
         ? sourceLookupTimeout
         : requestTimeout;
+    var timedOut = false, cancelled = false;
     final timer = Timer(budget, () {
+      timedOut = true;
       if (!abort.isCompleted) abort.complete();
     });
     unawaited(
       abortTrigger?.then((_) {
+        cancelled = true;
         if (!abort.isCompleted) abort.complete();
       }),
     );
@@ -312,6 +316,18 @@ class TedAuth {
     } on TedFailure {
       rethrow;
     } catch (_) {
+      if (path == '/api/client/v1/playback/sessions' ||
+          path == '/api/client/v1/playback/sources' ||
+          path == '/api/client/v1/playback/preparations') {
+        appLogger.w(
+          'TED playback request failed: operation=${path.split("/").last} '
+          'reason=${cancelled
+              ? "cancelled"
+              : timedOut
+              ? "timeout"
+              : "transport"}',
+        );
+      }
       throw const TedFailure('unavailable');
     } finally {
       timer.cancel();
@@ -333,7 +349,6 @@ class TedAuth {
     if (response.statusCode >= 200 && response.statusCode < 300) return;
     if (response.statusCode == 401) throw const TedFailure('sign_in_required');
     if (response.statusCode == 426) throw const TedFailure('incompatible_version');
-    if (response.statusCode == 429) throw const TedFailure('rate_limited');
     String? code;
     try {
       code = _object(response)['code'] as String?;
@@ -353,8 +368,22 @@ class TedAuth {
       'source_selection_required' ||
       'source_unsupported' ||
       'source_preparation_unavailable' ||
+      'source_placeholder' ||
+      'source_archive' ||
+      'source_unavailable' ||
+      'rd_source_pending' ||
+      'rd_infringing' ||
+      'rd_rejected' ||
+      'rd_not_configured' ||
+      'rd_credentials' ||
+      'rd_limited' ||
+      'rd_unavailable' ||
       'addon_unavailable' => code!,
-      _ => response.statusCode == 409 ? 'conflict' : 'unavailable',
+      _ => switch (response.statusCode) {
+        409 => 'conflict',
+        429 => 'rate_limited',
+        _ => 'unavailable',
+      },
     });
   }
 

@@ -6,8 +6,9 @@ import 'ted_client.dart';
 class TedPlayButton extends StatefulWidget {
   final TedTitle title;
   final VoidCallback? onPressed;
+  final FocusNode? focusNode;
   final bool compact;
-  const TedPlayButton({super.key, required this.title, required this.onPressed, this.compact = false});
+  const TedPlayButton({super.key, required this.title, required this.onPressed, this.compact = false, this.focusNode});
 
   @override
   State<TedPlayButton> createState() => _TedPlayButtonState();
@@ -59,6 +60,7 @@ class _TedPlayButtonState extends State<TedPlayButton> with SingleTickerProvider
         ? (remaining == null ? 'Resume' : '$remaining min left')
         : 'Play';
     final button = FilledButton(
+      focusNode: widget.focusNode,
       onPressed: widget.onPressed,
       onHover: (value) {
         setState(() => _hovered = value);

@@ -28,6 +28,7 @@ import 'ted_player_cursor.dart';
 import 'ted_player_loading.dart';
 import 'ted_playback_chapters.dart';
 import '../utils/platform_detector.dart';
+import '../utils/app_logger.dart';
 import '../widgets/video_controls/player_control_scope.dart';
 import '../focus/key_event_utils.dart';
 import '../focus/dpad_navigator.dart';
@@ -173,7 +174,11 @@ class _TeddyPlayerState extends State<TeddyPlayer> {
       await _playback.setRate(ScopedPlayerPrefs.resolve(ScopedPlayerPrefs.playbackSpeed, _metadata));
       _volume!.commit(settings.read(prefs.SettingsService.volume));
       if (mounted) setState(() {});
-    } catch (_) {
+    } catch (error) {
+      appLogger.w(
+        'TED player startup failed: session=${widget.session.id} '
+        'backend=${_playback.player.playerType} code=${error is TedFailure ? error.code : "playback_failed"}',
+      );
       if (mounted) setState(() => _startupError = const TedFailure('playback_failed').message);
     }
   }

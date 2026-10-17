@@ -26,9 +26,11 @@ import 'package:plezy/widgets/video_controls/video_controls.dart';
 import 'package:plezy/widgets/video_controls/widgets/timeline_slider.dart';
 import '../test_helpers/mock_player_channels.dart';
 import '../test_helpers/prefs.dart';
+import '../test_helpers/subtitle_fonts.dart';
 import 'ted_playback_test.dart' show ControlFixture, sessionId, mediaPath;
 
 void main() {
+  setUpAll(prepareSubtitleFonts);
   setUp(() async {
     resetSharedPreferencesForTest();
     SettingsService.resetForTesting();

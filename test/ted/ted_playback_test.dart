@@ -22,6 +22,7 @@ import 'package:plezy/ted/ted_playback_chapters.dart';
 import 'package:plezy/utils/log_redaction_manager.dart';
 import '../test_helpers/mock_player_channels.dart';
 import '../test_helpers/prefs.dart';
+import '../test_helpers/subtitle_fonts.dart';
 import 'ted_auth_test.dart' show MemoryStore, pair, response, signInRequired;
 
 const sessionId = '33333333-3333-4333-8333-333333333333';
@@ -143,6 +144,7 @@ class ControlFixture {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  setUpAll(prepareSubtitleFonts);
   setUp(() async {
     resetSharedPreferencesForTest();
     SettingsService.resetForTesting();
@@ -506,7 +508,9 @@ void main() {
     );
   });
 
-  testWidgets('a silent seek stall retries the pinned target twice and then exposes an interruption', (tester) async {
+  testWidgets('a silent seek stall retries the pinned target three times and then exposes an interruption', (
+    tester,
+  ) async {
     final f = ControlFixture();
     await withMockPlayerChannels(
       methodChannelName: 'com.plezy/mpv_player',
@@ -517,13 +521,13 @@ void main() {
           await f.open();
           await f.playback.transport(TransportCommand.pause);
           await f.playback.seek(const Duration(seconds: 40));
-          for (var attempt = 0; attempt < 3; attempt++) {
+          for (var attempt = 0; attempt < 4; attempt++) {
             await tester.pump(const Duration(seconds: 15));
             await tester.pump();
             expect(f.playback.completedNaturally, false);
           }
           final loads = f.calls.where((c) => c.method == 'command' && (c.arguments as Map)['args'][0] == 'loadfile');
-          expect(loads.length, 3);
+          expect(loads.length, 4);
           expect(loads.every((c) => (c.arguments as Map)['args'][1] == 'https://ted.example$mediaPath'), true);
           final starts = f.calls.where((c) => c.method == 'setProperty' && (c.arguments as Map)['name'] == 'start');
           expect(starts.skip(1).every((c) => (c.arguments as Map)['value'] == '40.0'), true);
@@ -770,7 +774,7 @@ void main() {
       testBody: () async {
         try {
           await f.open();
-          for (final target in [40, 20, 10]) {
+          for (final target in [40, 20, 10, 5]) {
             await f.playback.seek(Duration(seconds: target));
             f.player.handlePlayerEvent('end-file', {'reason': 'error', 'message': 'HTTP error 503'});
             await Future<void>.delayed(Duration.zero);
@@ -778,14 +782,14 @@ void main() {
               await Future<void>.delayed(Duration.zero);
             }
             expect(f.playback.completedNaturally, false);
-            if (target != 10) {
+            if (target != 5) {
               final starts = f.calls.where((c) => c.method == 'setProperty' && (c.arguments as Map)['name'] == 'start');
               expect((starts.last.arguments as Map)['value'], '$target.0');
               await f.loaded();
             }
           }
           final loads = f.calls.where((c) => c.method == 'command' && (c.arguments as Map)['args'][0] == 'loadfile');
-          expect(loads.length, 3);
+          expect(loads.length, 4);
           expect(loads.every((c) => (c.arguments as Map)['args'][1] == 'https://ted.example$mediaPath'), true);
           expect(f.playback.failure?.code, 'playback_failed');
           expect(f.reports.every((r) => r['natural_eof'] == false), true);
@@ -834,13 +838,13 @@ void main() {
       testBody: () async {
         try {
           await f.open();
-          for (var i = 0; i < 3; i++) {
+          for (var i = 0; i < 4; i++) {
             f.player.handlePropertyChange('eof-reached', true);
             await Future<void>.delayed(Duration.zero);
             while (f.playback.controlsBusy) {
               await Future<void>.delayed(Duration.zero);
             }
-            if (i < 2) {
+            if (i < 3) {
               await f.loaded();
               f.player.handlePlayerEvent('playback-restart', null);
             }
@@ -1027,8 +1031,14 @@ void main() {
       testBody: () async {
         try {
           await f.open();
-          f.player.debugSimulateServerHttpError(503);
-          await Future<void>.delayed(Duration.zero);
+          for (var attempt = 0; attempt < 4; attempt++) {
+            f.player.debugSimulateServerHttpError(503);
+            await Future<void>.delayed(Duration.zero);
+            while (f.playback.controlsBusy) {
+              await Future<void>.delayed(Duration.zero);
+            }
+            if (attempt < 3) await f.loaded();
+          }
           f.player.handlePropertyChange('track-list', [
             {'type': 'audio', 'id': 1, 'lang': 'eng', 'selected': true},
           ]);

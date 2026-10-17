@@ -25,7 +25,8 @@ class TedFailure implements Exception {
     'source_selection_required' => 'The source expired or changed. Find sources and choose again.',
     'source_unsupported' => 'This source does not support direct file playback and seeking.',
     'addon_unavailable' => 'Add-on sources are unavailable. Retry source discovery.',
-    'source_preparation_unavailable' => 'The selected source could not be prepared. Retry or choose another source.',
+    'source_preparation_unavailable' ||
+    'source_unavailable' => 'The selected source could not be prepared. Retry or choose another source.',
     'source_placeholder' =>
       'This source returned a short status video instead of the requested title. Your watch progress was preserved.',
     'rd_source_pending' => 'Real-Debrid is preparing or downloading this torrent. Try again when it is ready.',
@@ -35,6 +36,7 @@ class TedFailure implements Exception {
     'rd_credentials' => 'Real-Debrid rejected TED’s configured key. Check the RD account and server settings.',
     'rd_limited' => 'Real-Debrid is rate limiting requests. Wait a moment and retry.',
     'rd_unavailable' => 'Real-Debrid could not prepare this file. Retry or choose another source.',
+    'source_archive' => 'Real-Debrid returned an archive instead of this video. Choose another source.',
     'playback_failed' => 'The player could not play this source. Retry playback or choose another source.',
     'playback_interrupted' =>
       'The stream ended before the video finished. Reconnect or choose another source; your position is saved.',

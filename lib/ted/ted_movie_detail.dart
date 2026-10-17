@@ -50,6 +50,7 @@ class TedMovieDetail extends StatefulWidget {
 
 class TedMovieDetailState extends State<TedMovieDetail> {
   final _actions = GlobalKey<TedFocusRegionState>();
+  final _playFocus = FocusNode(debugLabel: 'ted_detail_play');
   final _cast = GlobalKey<TedCastRowState>();
   final _scroll = ScrollController();
   bool _revealPending = false;
@@ -84,6 +85,16 @@ class TedMovieDetailState extends State<TedMovieDetail> {
   }
 
   bool requestFocus() => (_lastLaneCast && (_cast.currentState?.requestFocus() ?? false)) || _focusActions();
+  bool requestPlayFocus() {
+    _focusOnLoad = true;
+    _lastLaneCast = false;
+    if (!_playable || _playFocus.context == null || ModalRoute.of(context)?.isCurrent == false) return false;
+    _playFocus.requestFocus();
+    _focusOnLoad = false;
+    _revealActions();
+    return true;
+  }
+
   bool _focusActions() {
     _lastLaneCast = false;
     return _actions.currentState?.requestFocus() ?? false;
@@ -156,6 +167,7 @@ class TedMovieDetailState extends State<TedMovieDetail> {
     _sourceRetry?.cancel();
     widget.client.discardPreparation(_preparation);
     _episodeArtwork.dispose();
+    _playFocus.dispose();
     _scroll.dispose();
     super.dispose();
   }
@@ -243,7 +255,7 @@ class TedMovieDetailState extends State<TedMovieDetail> {
   void _focusReady() {
     if (!_focusOnLoad) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _focusOnLoad && requestFocus()) _focusOnLoad = false;
+      if (mounted && _focusOnLoad) requestPlayFocus();
     });
   }
 
@@ -288,10 +300,12 @@ class TedMovieDetailState extends State<TedMovieDetail> {
 
   bool get _playable =>
       !_working && _mappingKnown && (_provider == 'mapped' ? _mapped?.ready == true : _selected != null);
+  bool get _hasSources => _stremio?.choices.isNotEmpty == true;
+  bool get _blockingSourceLoad => _loadingSources && !_hasSources;
   String? get _source => _provider == 'stremio' ? _selected : null;
 
   Future<void> _switch(String provider) async {
-    if (provider == _provider || _working || _loadingSources) return;
+    if (provider == _provider || _working || _blockingSourceLoad) return;
     setState(() {
       _provider = provider;
       _sourceError = null;
@@ -336,15 +350,17 @@ class TedMovieDetailState extends State<TedMovieDetail> {
   }
 
   Future<void> _choose() async {
-    if (_working || _loadingSources) return;
-    if (_stremio == null || _sourceError != null) await _loadStremio();
-    if (!mounted || _stremio == null || _sourceError != null) return;
+    if (_working || _blockingSourceLoad) return;
+    if (!_hasSources && (_stremio == null || _sourceError != null)) await _loadStremio();
+    if (!mounted || _stremio == null || !_hasSources && _sourceError != null) return;
+    var pickerPage = _stremio!;
     final chosen = await chooseTedSource(
       context,
-      _stremio!,
+      pickerPage,
       onReload: () => widget.client.stremioSources(_title.media, forceRefresh: true),
       client: widget.client,
       onChanged: (page) {
+        pickerPage = page;
         if (mounted) {
           setState(() => _retainSource(page));
           _prepareSelected();
@@ -352,12 +368,27 @@ class TedMovieDetailState extends State<TedMovieDetail> {
       },
     );
     if (mounted && chosen != null) {
-      setState(() => _selected = chosen);
+      final original = pickerPage.choices.where((c) => c.id == chosen).firstOrNull;
+      final current = _stremio!.choices
+          .where(
+            (c) =>
+                c.id == chosen ||
+                original != null && original.sourceKey.isNotEmpty && c.sourceKey == original.sourceKey,
+          )
+          .firstOrNull;
+      setState(() {
+        // A background retry can renew handles while the picker is open.
+        // Match verified release identity, never its label or provider name.
+        if (current == null && original != null) {
+          _stremio = _stremio!.withChoices([..._stremio!.choices, original]);
+        }
+        _selected = current?.id ?? chosen;
+      });
       _prepareSelected();
     }
   }
 
-  Future<void> _work(Future<void> Function() action) async {
+  Future<void> _work(Future<void> Function() action, {bool restorePlay = false}) async {
     if (_working) return;
     final restoreFocus = _actions.currentState?.hasFocus ?? false;
     setState(() {
@@ -375,6 +406,8 @@ class TedMovieDetailState extends State<TedMovieDetail> {
     } finally {
       if (mounted) {
         setState(() => _working = false);
+        if (restorePlay) _focusOnLoad = true;
+        _focusReady();
         if (restoreFocus && FocusManager.instance.primaryFocus is FocusScopeNode) requestFocus();
       }
     }
@@ -389,13 +422,14 @@ class TedMovieDetailState extends State<TedMovieDetail> {
       children: [
         _selectable(
           TedPlayButton(
+            focusNode: _playFocus,
             title: _title,
-            onPressed: _playable ? () => _work(() => widget.onPlay(_title, _source, false)) : null,
+            onPressed: _playable ? () => _work(() => widget.onPlay(_title, _source, false), restorePlay: true) : null,
           ),
         ),
         _selectable(
           OutlinedButton.icon(
-            onPressed: _playable ? () => _work(() => widget.onPlay(_title, _source, true)) : null,
+            onPressed: _playable ? () => _work(() => widget.onPlay(_title, _source, true), restorePlay: true) : null,
             icon: const Icon(Icons.restart_alt),
             label: const Text('Start from the beginning'),
           ),
@@ -435,7 +469,7 @@ class TedMovieDetailState extends State<TedMovieDetail> {
                 if (_mapped != null) const DropdownMenuItem(value: 'mapped', child: Text('RD Mapped')),
                 const DropdownMenuItem(value: 'stremio', child: Text('Stremio')),
               ],
-              onChanged: _mapped == null || _loading || _working || _loadingSources
+              onChanged: _mapped == null || _loading && !_hasSources || _working || _blockingSourceLoad
                   ? null
                   : (value) {
                       if (value != null) unawaited(_switch(value));
@@ -454,7 +488,9 @@ class TedMovieDetailState extends State<TedMovieDetail> {
             child: _selectable(
               OutlinedButton(
                 key: const ValueKey('movie-source-file'),
-                onPressed: _provider == 'stremio' && !_loading && !_working && !_loadingSources ? _choose : null,
+                onPressed: _provider == 'stremio' && (!_loading || _hasSources) && !_working && !_blockingSourceLoad
+                    ? _choose
+                    : null,
                 style: OutlinedButton.styleFrom(
                   alignment: Alignment.centerLeft,
                   minimumSize: const Size(0, 52),
@@ -464,7 +500,7 @@ class TedMovieDetailState extends State<TedMovieDetail> {
                   children: [
                     Expanded(
                       child: Text(
-                        _loadingSources
+                        _blockingSourceLoad
                             ? 'Loading sources…'
                             : _provider == 'mapped'
                             ? _mapped?.mappedFileName ?? 'Mapped file'
@@ -569,7 +605,7 @@ class TedMovieDetailState extends State<TedMovieDetail> {
               onMetadata: _metadata,
             ),
           ),
-          if (_loading || _working || _loadingSources) const LinearProgressIndicator(),
+          if (_loading || _working || _blockingSourceLoad) const LinearProgressIndicator(),
           _controls(),
           for (final message in [
             ?_error,

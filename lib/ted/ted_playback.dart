@@ -30,6 +30,9 @@ class TedPlayback extends ChangeNotifier {
   Future<void> _reports = Future<void>.value();
   Future<void> _controls = Future<void>.value();
   Future<void>? _recovery;
+  PlayerError? _recoveryError;
+  bool _recoveringOpen = false;
+  int _automaticRestarts = 0;
   Future<void>? _stop;
   Timer? _progress;
   Timer? _landingWatchdog;
@@ -51,7 +54,6 @@ class TedPlayback extends ChangeNotifier {
   final timelinePosition = ValueNotifier<Duration>(Duration.zero);
   int _sequence = 0;
   int _reconnectsWithoutFrame = 0;
-  int _prematureEnds = 0;
   int _learnedDurationMs = 0;
   bool _startReported = false;
   bool _durationRejected = false;
@@ -66,7 +68,7 @@ class TedPlayback extends ChangeNotifier {
   int _controlsPending = 0;
   TedFailure? _playerFailure;
   TedFailure? _syncFailure;
-  TedFailure? get failure => _syncFailure ?? _playerFailure;
+  TedFailure? get failure => _syncFailure ?? (_recovery == null ? _playerFailure : null);
   bool get ready => _ready;
   bool get loading =>
       !_closed &&
@@ -180,6 +182,7 @@ class TedPlayback extends ChangeNotifier {
         _capturePosition();
         _lastProgressPosition = _position;
         _idleProgressTicks = 0;
+        if (_automaticRestarts > 0) _diagnostic('recovery_landed');
         if (!_closed) notifyListeners();
         if (player.state.completed) unawaited(_checkEnd(_playheadGeneration));
       }),
@@ -194,28 +197,19 @@ class TedPlayback extends ChangeNotifier {
       player.streams.log.listen((log) {
         // Raw player diagnostics may contain URLs or headers. Keep them out of
         // Teddy logs/UI and use only this numeric status to recover access.
-        if (PlayerError.httpStatusFromLog(log.text) == 401 && !_stopping && !_closed) {
-          unawaited(reconnect(refreshAccess: true).catchError((Object _) {}));
+        if (PlayerError.httpStatusFromLog(log.text) == 401 && !_stopping && !_closed && _recovery == null) {
+          _recoverInterrupted(refreshAccess: true, reason: 'http_401');
         }
       }),
     );
     _subscriptions.add(
       player.streams.error.listen((error) {
-        if (_closed || _stopping || _recovery != null) return;
-        if (PlayerError.httpStatusFromLog(error.message) == 401) {
-          unawaited(reconnect(refreshAccess: true).catchError((Object _) {}));
-        } else if (_seekTarget != null && _prematureEnds++ < 2) {
-          // A failed range read during a seek may terminate mpv's file. Retry
-          // this pinned session at the requested offset; never advance items.
-          unawaited(reconnect().catchError((Object _) {}));
-        } else {
-          _playerFailure = TedFailure(switch (PlayerError.httpStatusFromLog(error.message)) {
-            409 => 'source_selection_required',
-            422 => 'source_unsupported',
-            _ => 'playback_failed',
-          });
-          notifyListeners();
+        if (_closed || _stopping) return;
+        if (_recovery != null) {
+          if (_recoveringOpen) _recoveryError = error;
+          return;
         }
+        _handlePlayerError(error);
       }),
     );
     _progress = Timer.periodic(const Duration(seconds: 15), (_) {
@@ -236,7 +230,10 @@ class TedPlayback extends ChangeNotifier {
     try {
       // Upstream Android native players read settings during initialization.
       // The TED entry does not run Plezy's main/bootstrap, so own this prerequisite.
+      _diagnostic('initializing');
       final settings = await SettingsService.getInstance();
+      if (player.playerType == 'mpv') await player.configureSubtitleFonts();
+      _diagnostic('configuring_decoder');
       final hardware = settings.read(SettingsService.enableHardwareDecoding);
       await player.setProperty(
         'hwdec',
@@ -264,9 +261,13 @@ class TedPlayback extends ChangeNotifier {
       );
     } on TedFailure catch (error) {
       _playerFailure = error;
+      _diagnostic('open_failed', code: error.code);
+      if (_retryable(error)) _recoverInterrupted(reason: 'open_failed');
       if (!_closed) notifyListeners();
     } catch (_) {
       _playerFailure = const TedFailure('playback_failed');
+      _diagnostic('open_failed', code: 'playback_failed');
+      _recoverInterrupted(reason: 'open_failed');
       if (!_closed) notifyListeners();
     }
   }
@@ -283,6 +284,7 @@ class TedPlayback extends ChangeNotifier {
     _idleProgressTicks = 0;
     _pendingEnd?.cancel();
     _position = position;
+    _diagnostic('open');
     timelinePosition.value = position;
     notifyListeners();
     if (offline) {
@@ -345,14 +347,54 @@ class TedPlayback extends ChangeNotifier {
     });
   }
 
-  void _recoverInterrupted() {
+  bool _retryable(TedFailure failure) => const {
+    'unavailable',
+    'rd_unavailable',
+    'source_unavailable',
+    'source_preparation_unavailable',
+    'playback_failed',
+    'playback_interrupted',
+  }.contains(failure.code);
+
+  void _diagnostic(String phase, {String? code, int? httpStatus}) {
+    final message =
+        'TED playback: phase=$phase backend=${player.playerType} media=${session.media.kind}/${session.media.id} '
+        'session=${session.id} position_ms=$positionMs attempt=$_automaticRestarts '
+        'code=${code ?? "none"} http_status=${httpStatus ?? 0}';
+    if (code == null) {
+      appLogger.i(message);
+    } else {
+      appLogger.w(message);
+    }
+  }
+
+  void _handlePlayerError(PlayerError error) {
+    final status = PlayerError.httpStatusFromLog(error.message);
+    _diagnostic('player_error', code: 'playback_failed', httpStatus: status);
+    if (status == 409 || status == 422) {
+      _pendingEnd?.cancel();
+      _landingWatchdog?.cancel();
+      _playerFailure = TedFailure(status == 409 ? 'source_selection_required' : 'source_unsupported');
+      notifyListeners();
+      return;
+    }
+    _recoverInterrupted(refreshAccess: status == 401, reason: status == 401 ? 'http_401' : 'player_error');
+  }
+
+  void _recoverInterrupted({bool refreshAccess = false, String reason = 'interrupted'}) {
     if (_closed || _stopping || _recovery != null) return;
+    if (_playerFailure != null && !_retryable(_playerFailure!)) return;
     _pendingEnd?.cancel();
     _landingWatchdog?.cancel();
-    if (_prematureEnds++ < 2) {
-      unawaited(reconnect().catchError((Object _) {}));
+    if (!_durationRejected && _automaticRestarts < 3) {
+      _automaticRestarts++;
+      _diagnostic('recovery_started', code: reason);
+      unawaited(reconnect(refreshAccess: refreshAccess).catchError((Object _) {}));
     } else {
-      _playerFailure = const TedFailure('playback_interrupted');
+      _playerFailure = _durationRejected
+          ? const TedFailure('source_placeholder')
+          : TedFailure(reason == 'interrupted' ? 'playback_interrupted' : 'playback_failed');
+      _diagnostic('recovery_exhausted', code: _playerFailure!.code);
       notifyListeners();
     }
   }
@@ -361,6 +403,7 @@ class TedPlayback extends ChangeNotifier {
     if (_checkingEndGeneration == generation ||
         _closed ||
         _stopping ||
+        _playerFailure != null ||
         _durationRejected ||
         _recovery != null ||
         generation != _playheadGeneration) {
@@ -436,7 +479,6 @@ class TedPlayback extends ChangeNotifier {
     final signature =
         '$_originalLanguage|${_languages.audio}|${_languages.subtitle}|${tracks.audio.map((t) => '${t.id}:${t.language}').join(',')}|${tracks.subtitle.map((t) => '${t.id}:${t.language}').join(',')}';
     if (_trackSignature == signature) return;
-    _trackSignature = signature;
     AudioTrack? audio;
     for (final candidate in [AudioTrack.auto, ...tracks.audio]) {
       if (candidate.id == _audioId) {
@@ -453,13 +495,22 @@ class TedPlayback extends ChangeNotifier {
       }
     }
     subtitle ??= _languages.subtitleTrack(tracks.subtitle);
+    appLogger.i(
+      'TED subtitles: backend=${player.playerType} session=${session.id} '
+      'available=${tracks.subtitle.length} selected=${_safeCodec(subtitle.id)} '
+      'language=${tedLanguage(subtitle.language)} codec=${_safeCodec(subtitle.codec)}',
+    );
     await player.selectAudioTrack(audio);
     if (!_closed && !_stopping) await player.selectSubtitleTrack(subtitle);
     if (!_closed && !_stopping && player.supportsSecondarySubtitles && _secondarySubtitleId != null) {
       final secondary = [SubtitleTrack.off, ...tracks.subtitle].where((t) => t.id == _secondarySubtitleId).firstOrNull;
       if (secondary != null) await player.selectSecondarySubtitleTrack(secondary);
     }
+    _trackSignature = signature;
   }
+
+  String _safeCodec(String? value) =>
+      value != null && RegExp(r'^[a-zA-Z0-9_-]{1,32}$').hasMatch(value) ? value : 'unknown';
 
   // Native control requests may reopen the HTTP stream. Keep track switches,
   // seeks and access recovery ordered, and contain rejected native commands.
@@ -481,8 +532,10 @@ class TedPlayback extends ChangeNotifier {
         }
       } on TedFailure catch (error) {
         _playerFailure = error;
+        _diagnostic('control_failed', code: error.code);
       } catch (_) {
         _playerFailure = TedFailure(failureCode);
+        _diagnostic('control_failed', code: failureCode);
       }
     });
     _controls = operation;
@@ -534,6 +587,10 @@ class TedPlayback extends ChangeNotifier {
         throw const TedFailure('track_unavailable');
       }
       _subtitleId = track.id;
+      appLogger.i(
+        'TED subtitles selected: backend=${player.playerType} session=${session.id} '
+        'selected=${_safeCodec(track.id)} language=${tedLanguage(track.language)} codec=${_safeCodec(track.codec)}',
+      );
       if (await _ensureCurrentHeaders()) {
         await player.selectSubtitleTrack(track);
         await _rememberLanguage(track.language, audio: false);
@@ -620,13 +677,15 @@ class TedPlayback extends ChangeNotifier {
   Future<void> reconnect({bool refreshAccess = false}) {
     if (_recovery != null) return _recovery!;
     if (_closed || _stopping) return Future<void>.value();
-    if (_reconnectsWithoutFrame++ >= 2) {
+    if (_reconnectsWithoutFrame++ >= 3) {
       _playerFailure = const TedFailure('playback_failed');
       notifyListeners();
       return Future<void>.value();
     }
     if (player.currentPosition > Duration.zero || _position == Duration.zero) _capturePosition();
     final offset = _position;
+    _playerFailure = null;
+    _recoveryError = null;
     late final Future<void> operation;
     operation =
         _control(() async {
@@ -637,10 +696,23 @@ class TedPlayback extends ChangeNotifier {
               await client.auth.headers();
             }
           }
-          if (!_closed && !_stopping) await _openAt(offset, play: _wantsToPlay);
+          if (!_closed && !_stopping) {
+            _recoveringOpen = true;
+            await _openAt(offset, play: _wantsToPlay);
+          }
         }).whenComplete(() {
+          _recoveringOpen = false;
           if (identical(_recovery, operation)) {
             _recovery = null;
+            final error = _recoveryError;
+            _recoveryError = null;
+            if (!_closed && !_stopping) {
+              if (error != null) {
+                _handlePlayerError(error);
+              } else if (_playerFailure != null && _retryable(_playerFailure!)) {
+                _recoverInterrupted(reason: 'reopen_failed');
+              }
+            }
             if (!_closed) notifyListeners();
           }
         });

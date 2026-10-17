@@ -375,9 +375,7 @@ void main() {
     expect(find.text('Other movie'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
-  testWidgets('cast opens an in-shell person; rows, sidebar and nested titles restore their previous focus on Escape', (
-    tester,
-  ) async {
+  testWidgets('person rows restore focus; Escape to movie details focuses Play', (tester) async {
     final client = PersonFixture();
     await mount(tester, client, tv: true, shell: true, size: const Size(1512, 950));
     await tester.pumpAndSettle();
@@ -421,7 +419,7 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.escape);
     await tester.pumpAndSettle();
     expect(find.byType(TedMovieDetail), findsOneWidget);
-    expect(FocusManager.instance.primaryFocus?.debugLabel, 'ted_cast_row');
+    expect(FocusManager.instance.primaryFocus?.debugLabel, 'ted_detail_play');
     expect(tester.widget<CastMemberStrip>(find.byType(CastMemberStrip)).onMemberTap, isNotNull);
     expect(tester.takeException(), isNull);
   });
