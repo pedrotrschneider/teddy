@@ -268,7 +268,7 @@ void main() {
       final client = SidebarFixture();
       await mount(tester, client, tv: tv);
       await press(tester, LogicalKeyboardKey.arrowUp);
-      const labels = ['Search', 'Home', 'Movies', 'Shows', 'Downloads'];
+      const labels = ['Search', 'Home', 'Movies', 'Series', 'Downloads'];
       NavigationRailItem item(int i) => tester
           .widgetList<NavigationRailItem>(find.byType(NavigationRailItem))
           .firstWhere((v) => (v.label as Text).data == labels[i]);
@@ -978,7 +978,7 @@ void main() {
 
   testWidgets('Up at Search, Movies and Shows top controls stays in content', (tester) async {
     for (final tv in [false, true]) {
-      for (final section in ['Search', 'Movies', 'Shows']) {
+      for (final section in ['Search', 'Movies', 'Series']) {
         await tester.pumpWidget(const SizedBox.shrink());
         await mount(tester, KeyboardFixture(), tv: tv);
         final destination = find.byWidgetPredicate(
@@ -1085,7 +1085,7 @@ void main() {
     expect(find.byType(TedSeriesDetail), findsOneWidget);
     expect(focused(find.text('Season 1')), true);
     await press(tester, LogicalKeyboardKey.arrowUp);
-    expect(focused(find.text('Mark show watched')), true);
+    expect(focused(find.text('Mark series watched')), true);
     await press(tester, LogicalKeyboardKey.arrowDown);
     expect(focused(find.text('Season 1')), true);
     await press(tester, LogicalKeyboardKey.arrowRight);

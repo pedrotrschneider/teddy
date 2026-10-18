@@ -39,9 +39,9 @@ class CatalogFixture extends TedClient {
   TedTitle get movie => TedTitle.fromJson(titleData(played: played));
   TedTitle get show => TedTitle.fromJson(titleData(kind: 'series', id: 'tt8888888', ready: false, played: played));
   @override
-  Future<TedSeriesWatch> showWatch(String id) async => TedSeriesWatch('a' * 64, 2, played ? 2 : 0);
+  Future<TedSeriesWatch> seriesWatch(String id) async => TedSeriesWatch('a' * 64, 2, played ? 2 : 0);
   @override
-  Future<void> setShowWatched(String id, String version, bool watched) async {
+  Future<void> setSeriesWatched(String id, String version, bool watched) async {
     played = watched;
   }
 

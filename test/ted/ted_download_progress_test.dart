@@ -320,7 +320,7 @@ void main() {
               TedDownloadButton(
                 downloads: manager,
                 media: const TedMediaIdentity('series', 'tt1234567'),
-                label: 'Download show',
+                label: 'Download series',
               ),
               TedDownloadButton(
                 downloads: manager,

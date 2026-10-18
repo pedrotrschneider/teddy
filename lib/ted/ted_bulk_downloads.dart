@@ -23,7 +23,7 @@ Future<int?> chooseTedBulkDownloads(
         scroll: false,
         onBack: () => Navigator.of(context).pop(),
         child: AlertDialog(
-          title: Text(season == null ? 'Download show' : 'Download season'),
+          title: Text(season == null ? 'Download series' : 'Download season'),
           content: const Text('Choose which episodes to download.'),
           actions: [
             TextButton(onPressed: () => Navigator.of(context).pop(false), child: const Text('Download all')),

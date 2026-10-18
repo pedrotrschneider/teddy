@@ -609,7 +609,7 @@ class TedHomeBannerState extends State<TedHomeBanner> with WidgetsBindingObserve
           SizedBox(height: compact ? 8 : 16),
           Text(
             [
-              title.media.kind == 'movie' ? 'Movie' : 'TV Show',
+              title.media.kind == 'movie' ? 'Movie' : 'Series',
               if (rating != null) '★ ${rating.toStringAsFixed(1)}',
               if (year.isNotEmpty) year,
               if (slide.metadata?.certification?.isNotEmpty == true) slide.metadata!.certification!,

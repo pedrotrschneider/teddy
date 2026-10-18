@@ -91,7 +91,7 @@ void main() {
 
   testWidgets('show, season and episode share a fixed Back button and preserve their parent flow', (tester) async {
     await mount(tester, SeriesDetailFixture());
-    await tap(tester, destination('Shows'));
+    await tap(tester, destination('Series'));
     await tap(tester, find.byType(MediaCard).first);
     await fixedAfterScroll(tester, TedSeriesDetail);
     await tap(tester, find.byType(MediaCard).first);
@@ -110,7 +110,7 @@ void main() {
 
   testWidgets('Android system Back follows episode, season, show and closes dialogs first', (tester) async {
     await mount(tester, SeriesDetailFixture());
-    await tap(tester, destination('Shows'));
+    await tap(tester, destination('Series'));
     await tap(tester, find.byType(MediaCard).first);
     await tap(tester, find.byType(MediaCard).first);
     await tap(tester, find.byType(MediaCard).first);
@@ -138,7 +138,7 @@ void main() {
     expect(find.byType(TedSeriesDetail), findsNothing);
     await tester.binding.handlePopRoute();
     await tester.pumpAndSettle();
-    expect(destination('Shows'), findsOneWidget);
+    expect(destination('Series'), findsOneWidget);
   });
 
   testWidgets('movie and person Back stay fixed; Up reaches Back and sidebar Right restores it', (tester) async {
@@ -216,10 +216,10 @@ void main() {
     expect(find.byType(TeddySettingsScreen), findsNothing);
     expect(find.byType(TedMovieDetail), findsOneWidget);
     await tap(tester, find.byTooltip('Settings'));
-    await tap(tester, destination('Shows'));
+    await tap(tester, destination('Series'));
     expect(find.byType(TeddySettingsScreen), findsNothing);
     expect(find.byType(TedMovieDetail), findsNothing);
-    expect(tester.widget<NavigationRailItem>(destination('Shows')).isSelected, true);
+    expect(tester.widget<NavigationRailItem>(destination('Series')).isSelected, true);
     expect(tester.takeException(), isNull);
   });
 

@@ -38,7 +38,11 @@ class TedPresentation {
     leafCount: title.episodeCount,
     viewedLeafCount: title.watchedEpisodeCount,
     rating: title.rating,
-    raw: {'imdb_rating': title.rating, 'joint_watches': title.jointWatches.map((w) => w.toJson()).toList()},
+    raw: {
+      'imdb_rating': title.rating,
+      'user_watches': title.userWatches.map((w) => w.toJson()).toList(),
+      'joint_watches': title.jointWatches.map((w) => w.toJson()).toList(),
+    },
     genres: title.genres,
   );
   MediaHub hub(TedHomeRow row) => MediaHub(
@@ -53,9 +57,9 @@ class TedPresentation {
     'new-releases' => 'New Releases',
     'next-up' => 'Next Up',
     'popular-movie' => 'Popular Movies',
-    'popular-series' => 'Popular Shows',
+    'popular-series' => 'Popular Series',
     'movie' => 'Movies',
-    'series' => 'Shows',
+    'series' => 'Series',
     'mapped' => 'Mapped items',
     'search' => 'Search',
     'downloads' => 'Downloads',

@@ -148,7 +148,7 @@ void main() {
       final bounds = tester.getRect(poster);
       homeRatios[kind] = bounds.height / bounds.width;
     }
-    for (final section in ['Movies', 'Shows']) {
+    for (final section in ['Movies', 'Series']) {
       await tester.tap(destination(section));
       await tester.pumpAndSettle();
       final card = find.byType(MediaCard).first;
@@ -193,7 +193,7 @@ void main() {
     await tester.pumpAndSettle();
     final homeLeft = tester.getTopLeft(homePoster).dx;
     double? filterGap;
-    for (final section in ['Movies', 'Shows']) {
+    for (final section in ['Movies', 'Series']) {
       await tester.tap(destination(section));
       await tester.pumpAndSettle();
       final banner = find.byKey(const ValueKey('catalog-banner'));
@@ -239,7 +239,7 @@ void main() {
     for (final size in const [Size(1440, 900), Size(390, 844)]) {
       await tester.pumpWidget(const SizedBox.shrink());
       await mount(tester, CatalogBrowseFixture(), tv: false, size: size);
-      for (final section in ['Movies', 'Shows']) {
+      for (final section in ['Movies', 'Series']) {
         await tester.tap(destination(section));
         await tester.pumpAndSettle();
         final poster = find
@@ -276,7 +276,7 @@ void main() {
       tester.widget<DropdownButtonFormField<String>>(find.byKey(const ValueKey('catalog-order'))).onChanged,
       isNull,
     );
-    await tester.tap(destination('Shows'));
+    await tester.tap(destination('Series'));
     await tester.pumpAndSettle();
     expect(client.reads.last, containsPair('kind', 'series'));
     expect(client.reads.last, containsPair('watched', 'partial'));
@@ -291,8 +291,8 @@ void main() {
       await mount(tester, CatalogBrowseFixture(), tv: tv);
       await key(tester, LogicalKeyboardKey.arrowDown); // Home sidebar focus -> Movies
       await key(tester, LogicalKeyboardKey.enter);
-      for (final section in ['Movies', 'Shows']) {
-        if (section == 'Shows') {
+      for (final section in ['Movies', 'Series']) {
+        if (section == 'Series') {
           await key(tester, LogicalKeyboardKey.escape); // filters -> Movies sidebar
           await key(tester, LogicalKeyboardKey.arrowDown);
           await key(tester, LogicalKeyboardKey.enter);
@@ -323,7 +323,7 @@ void main() {
           true,
           reason: 'Up enters the remembered filter in $section (TV: $tv)',
         );
-        if (section == 'Shows') {
+        if (section == 'Series') {
           await key(tester, LogicalKeyboardKey.arrowLeft);
           expect(focused(find.byKey(const ValueKey('catalog-mapped'))), true);
         }

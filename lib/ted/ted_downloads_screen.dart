@@ -439,7 +439,7 @@ class TedDownloadsScreenState extends State<TedDownloadsScreen> {
                 IconButton(
                   focusNode: trash,
                   tooltip: node.kind == 'show'
-                      ? 'Delete all downloaded episodes of this show'
+                      ? 'Delete all downloaded episodes of this series'
                       : node.kind == 'season'
                       ? 'Delete all downloaded episodes of this season'
                       : 'Delete device copy',
@@ -518,7 +518,7 @@ class TedDownloadsScreenState extends State<TedDownloadsScreen> {
           const Padding(
             padding: EdgeInsets.all(24),
             child: Text(
-              'No downloads for this account on this device. Open a movie, show, season or episode and select Download.',
+              'No downloads for this account on this device. Open a movie, series, season or episode and select Download.',
             ),
           ),
         for (final node in _visible) _row(node),

@@ -16,17 +16,17 @@ List<TedTitle> selectTedHomeBanner(List<TedHomeRow> rows) {
       if (chosen.length == 5) return chosen;
     }
   }
-  final movies = row('popular-movie'), shows = row('popular-series');
-  int movie = 0, show = 0;
-  while (chosen.length < 5 && (movie < movies.length || show < shows.length)) {
+  final movies = row('popular-movie'), series = row('popular-series');
+  int movie = 0, seriesIndex = 0;
+  while (chosen.length < 5 && (movie < movies.length || seriesIndex < series.length)) {
     while (movie < movies.length && seen.contains(movies[movie].media)) {
       movie++;
     }
     if (movie < movies.length) add(movies[movie++]);
-    while (show < shows.length && seen.contains(shows[show].media)) {
-      show++;
+    while (seriesIndex < series.length && seen.contains(series[seriesIndex].media)) {
+      seriesIndex++;
     }
-    if (show < shows.length) add(shows[show++]);
+    if (seriesIndex < series.length) add(series[seriesIndex++]);
   }
   return chosen;
 }

@@ -106,9 +106,9 @@ class SeriesDetailFixture extends MovieFixture {
   }
 
   @override
-  Future<TedSeriesWatch> showWatch(String id) async => TedSeriesWatch('a' * 64, 2, showPlayed ? 2 : 0);
+  Future<TedSeriesWatch> seriesWatch(String id) async => TedSeriesWatch('a' * 64, 2, showPlayed ? 2 : 0);
   @override
-  Future<void> setShowWatched(String id, String version, bool watched) async {
+  Future<void> setSeriesWatched(String id, String version, bool watched) async {
     watchedChanges.add(watched);
     showPlayed = watched;
   }
@@ -265,7 +265,7 @@ void main() {
     }
   }
 
-  testWidgets('Shows entry retains season navigation, controls and sidebar through the full Back flow', (tester) async {
+  testWidgets('Series entry retains season navigation, controls and sidebar through the full Back flow', (tester) async {
     final client = SeriesDetailFixture();
     var downloads = 0;
     final seasonDownloads = <int>[];
@@ -274,7 +274,7 @@ void main() {
       TedBrowseScreen(
         client: client,
         onPlay: (_) async {},
-        onDownloadShow: (_) async {
+        onDownloadSeries: (_) async {
           downloads++;
         },
         onDownloadSeason: (_, season) async => seasonDownloads.add(season),
@@ -282,7 +282,7 @@ void main() {
       client,
     );
     await tester.tap(
-      find.byWidgetPredicate((w) => w is NavigationRailItem && w.label is Text && (w.label as Text).data == 'Shows'),
+      find.byWidgetPredicate((w) => w is NavigationRailItem && w.label is Text && (w.label as Text).data == 'Series'),
     );
     await tester.pumpAndSettle();
     final showCard = find
@@ -295,13 +295,13 @@ void main() {
     expect(find.byType(NavigationRailItem), findsNWidgets(8));
     expect(find.text('Next Up'), findsNothing);
     expect(find.text('Start from the beginning'), findsNothing);
-    await tester.tap(find.text('Download show'));
+    await tester.tap(find.text('Download series'));
     await tester.pumpAndSettle();
     expect(downloads, 1);
-    await tester.tap(find.text('Mark show watched'));
+    await tester.tap(find.text('Mark series watched'));
     await tester.pumpAndSettle();
     expect(client.watchedChanges, [true]);
-    expect(find.text('Mark show unwatched'), findsOneWidget);
+    expect(find.text('Mark series unwatched'), findsOneWidget);
     final seasonCard = find.byWidgetPredicate(
       (w) => w is MediaCard && (w.item as MediaItem).id == 'season/tt4000000/1',
     );
@@ -333,7 +333,7 @@ void main() {
     expect(find.byType(TedSeriesDetail), findsNothing);
     expect(focused(showCard), true);
     final showsNav = find.byWidgetPredicate(
-      (w) => w is NavigationRailItem && w.label is Text && (w.label as Text).data == 'Shows',
+      (w) => w is NavigationRailItem && w.label is Text && (w.label as Text).data == 'Series',
     );
     expect(tester.widget<NavigationRailItem>(showsNav).isSelected, true);
     expect(tester.takeException(), isNull);
@@ -547,8 +547,8 @@ void main() {
         await mouse.addPointer(location: const Offset(10, 10));
         final before = FocusManager.instance.primaryFocus;
         for (final label in [
-          season ? 'Download season' : 'Download show',
-          season ? 'Mark season watched' : 'Mark show watched',
+          season ? 'Download season' : 'Download series',
+          season ? 'Mark season watched' : 'Mark series watched',
         ]) {
           await mouse.moveTo(const Offset(10, 10));
           scroll.jumpTo(80);

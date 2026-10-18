@@ -138,7 +138,7 @@ class _TedCatalogScreenState extends State<TedCatalogScreen> {
           controller: _search,
           enabled: !_busy,
           decoration: InputDecoration(
-            labelText: 'Search movies and shows',
+            labelText: 'Search movies and series',
             suffixIcon: IconButton(
               tooltip: 'Search',
               onPressed: _busy
@@ -159,7 +159,7 @@ class _TedCatalogScreenState extends State<TedCatalogScreen> {
       Wrap(
         spacing: 8,
         children: [
-          for (final entry in const {'home': 'Home', 'movie': 'Movies', 'series': 'Shows', 'mapped': 'Mapped'}.entries)
+          for (final entry in const {'home': 'Home', 'movie': 'Movies', 'series': 'Series', 'mapped': 'Mapped'}.entries)
             ChoiceChip(
               label: Text(entry.value),
               selected: _section == entry.key,
@@ -257,7 +257,7 @@ String _rowName(String id) => switch (id) {
   'continue-watching' => 'Continue Watching',
   'next-up' => 'Next Up',
   'popular-movie' || 'movie' => 'Movies',
-  'popular-series' || 'series' => 'Shows',
+  'popular-series' || 'series' => 'Series',
   'mapped' => 'Mapped items',
   _ => 'Home',
 };

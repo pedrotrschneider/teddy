@@ -1,4 +1,5 @@
 import 'ted/ted_profile_screen.dart';
+import 'ted/ted_user_avatar.dart';
 import 'ted/ted_profile_pictures.dart';
 import 'ted/ted_secure_storage_recovery.dart';
 import 'ted/ted_source_cache.dart';
@@ -694,7 +695,7 @@ class _TeddyHomeState extends State<TeddyHome> {
 
   @override
   Widget build(BuildContext context) {
-    final page = _buildPage(context);
+    final page = TedUserAvatarScope(client: _client, child: _buildPage(context));
     if (_showProfiles || _auth.signedIn) return page;
     return TedBackScope(
       onBack: _backToProfiles,
@@ -744,7 +745,7 @@ class _TeddyHomeState extends State<TeddyHome> {
                   onDownload: _download,
                   onPlaySelection: _playSelected,
                   onDownloadSelection: _downloadSelected,
-                  onDownloadShow: (title) async {
+                  onDownloadSeries: (title) async {
                     final count = await chooseTedBulkDownloads(context, _downloads, show: title);
                     if (context.mounted && count != null && count > 0) {
                       ScaffoldMessenger.of(context).showSnackBar(

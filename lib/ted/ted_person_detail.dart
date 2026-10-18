@@ -295,7 +295,10 @@ class TedPersonDetailState extends State<TedPersonDetail> {
     viewCount: entry.type == 'Movie' && entry.watched == true ? 1 : 0,
     leafCount: entry.episodeCount,
     viewedLeafCount: entry.watchedEpisodeCount,
-    raw: {'joint_watches': entry.jointWatches.map((w) => w.toJson()).toList()},
+    raw: {
+      'user_watches': entry.userWatches.map((w) => w.toJson()).toList(),
+      'joint_watches': entry.jointWatches.map((w) => w.toJson()).toList(),
+    },
   );
   Widget _row(bool watched, double maxWidth) {
     final entries = watched ? _watched : _other;

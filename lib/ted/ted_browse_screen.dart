@@ -55,7 +55,7 @@ class TedBrowseScreen extends StatefulWidget {
   final TedDownloads? downloads;
   final TedPlay onPlay;
   final TedPlay? onDownload;
-  final TedPlay? onDownloadShow;
+  final TedPlay? onDownloadSeries;
   final Future<void> Function(TedTitle, int)? onDownloadSeason;
   final TedSelectedPlay? onPlaySelection;
   final TedSelectedDownload? onDownloadSelection;
@@ -71,7 +71,7 @@ class TedBrowseScreen extends StatefulWidget {
     this.downloads,
     required this.onPlay,
     this.onDownload,
-    this.onDownloadShow,
+    this.onDownloadSeries,
     this.onDownloadSeason,
     this.onPlaySelection,
     this.onDownloadSelection,
@@ -1455,7 +1455,7 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
                                 onSidebar: () => _focusSidebar(origin: 'show-detail'),
                                 onHeader: _focusDetailBack,
                                 onSeason: (season) => _openSeason(page.key.currentState?.title ?? page.title, season),
-                                onDownload: widget.onDownloadShow,
+                                onDownload: widget.onDownloadSeries,
                                 onPerson: _openPerson,
                               ),
                               _SeasonPage() => TedSeasonDetail(
@@ -1935,7 +1935,7 @@ class _TedDetailScreenState extends State<TedDetailScreen> {
                                 ),
                               );
                             }),
-                            child: const Text('Go to show'),
+                            child: const Text('Go to series'),
                           ),
                       ],
                     ),

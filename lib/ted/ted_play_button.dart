@@ -55,7 +55,7 @@ class _TedPlayButtonState extends State<TedPlayButton> with SingleTickerProvider
     final progress = title.durationMs == null ? null : (title.positionMs / title.durationMs!).clamp(0.0, 1.0);
     final remaining = progress == null ? null : math.max(1, ((title.durationMs! - title.positionMs) / 60000).ceil());
     final label = !title.media.playable
-        ? 'View show'
+        ? 'View series'
         : title.positionMs > 0
         ? (remaining == null ? 'Resume' : '$remaining min left')
         : 'Play';

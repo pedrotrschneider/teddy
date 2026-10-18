@@ -79,10 +79,10 @@ void main() {
       addTearDown(auth.close);
       await auth.login('https://ted.example', 'u', '', 'Series test');
       final client = TedClient(auth);
-      final reviewed = await client.showWatch('tt1234567');
+      final reviewed = await client.seriesWatch('tt1234567');
       expect(reviewed.count, 1);
       expect(reviewed.seasonCounts[1], (4, 1));
-      await client.setShowWatched('tt1234567', 'a' * 64, true);
+      await client.setSeriesWatched('tt1234567', 'a' * 64, true);
       expect((await client.season('tt1234567', 1)).type, 'Season');
       for (final bad in [
         {...snapshot, 'version': ''},
@@ -103,7 +103,7 @@ void main() {
       ]) {
         expect(() => TedSeriesWatch.fromJson(bad, 'tt1234567'), throwsA(isA<TedFailure>()));
       }
-      await expectLater(client.showWatch('../wrong'), throwsA(isA<TedFailure>()));
+      await expectLater(client.seriesWatch('../wrong'), throwsA(isA<TedFailure>()));
     },
   );
   test(

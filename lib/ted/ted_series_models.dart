@@ -1,20 +1,23 @@
 import 'ted_joint_watch.dart';
+import 'ted_user_watch.dart';
 import 'ted_models.dart';
 
 class TedSeriesWatch {
   final String version;
   final int count, watched;
   final Map<int, (int, int)> seasonCounts;
+  final Map<int, List<TedUserWatch>> userCounts;
   final Map<int, List<TedJointWatch>> jointCounts;
   const TedSeriesWatch(
     this.version,
     this.count,
     this.watched, {
     this.seasonCounts = const {},
+    this.userCounts = const {},
     this.jointCounts = const {},
   });
   bool get fullyWatched => count > 0 && watched == count;
-  factory TedSeriesWatch.fromJson(Map<String, dynamic> data, String show, {int? season}) {
+  factory TedSeriesWatch.fromJson(Map<String, dynamic> data, String series, {int? season}) {
     try {
       final version = data['version'] as String;
       final items = data['items'] as List;
@@ -24,7 +27,7 @@ class TedSeriesWatch {
         final item = raw as Map<String, dynamic>;
         final media = TedMediaIdentity.fromJson(item['media'] as Map<String, dynamic>);
         if (media.kind != 'episode' ||
-            media.id.split(':').first != show ||
+            media.id.split(':').first != series ||
             (season != null && int.parse(media.id.split(':')[1]) != season) ||
             !ids.add(media) ||
             item['revision'] is! int ||
@@ -58,7 +61,22 @@ class TedSeriesWatch {
             .map((v) => TedJointWatch.fromJson(Map<String, dynamic>.from(v as Map)))
             .toList();
       }
-      return TedSeriesWatch(version, items.length, watched, seasonCounts: counts, jointCounts: joint);
+      final users = <int, List<TedUserWatch>>{};
+      for (final entry in (data['user_counts'] as Map<String, dynamic>? ?? {}).entries) {
+        final n = int.parse(entry.key);
+        if (n < 0 || n > 9999 || (season != null && n != season)) throw const TedFailure('invalid_response');
+        users[n] = (entry.value as List)
+            .map((e) => TedUserWatch.fromJson(Map<String, dynamic>.from(e as Map)))
+            .toList();
+      }
+      return TedSeriesWatch(
+        version,
+        items.length,
+        watched,
+        seasonCounts: counts,
+        jointCounts: joint,
+        userCounts: users,
+      );
     } catch (_) {
       throw const TedFailure('invalid_response');
     }

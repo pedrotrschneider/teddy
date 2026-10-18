@@ -174,7 +174,7 @@ class TedSeriesDetailState extends State<TedSeriesDetail> {
       }(),
       () async {
         try {
-          final watch = await widget.client.showWatch(_title.media.id);
+          final watch = await widget.client.seriesWatch(_title.media.id);
           if (mounted && gen == _generation) setState(() => _watch = watch);
         } catch (e) {
           if (mounted && gen == _generation) setState(() => _error = _message(e));
@@ -253,7 +253,7 @@ class TedSeriesDetailState extends State<TedSeriesDetail> {
                     TedDownloadButton(
                       downloads: widget.downloads,
                       media: _title.media,
-                      label: 'Download show',
+                      label: 'Download series',
                       onPressed: _working || _loading || widget.onDownload == null || _title.seasons.isEmpty
                           ? null
                           : () => _work(() => widget.onDownload!(_title)),
@@ -264,10 +264,10 @@ class TedSeriesDetailState extends State<TedSeriesDetail> {
                       onPressed: _working || _loading || _watch == null || _watch!.count == 0
                           ? null
                           : () => _work(
-                              () => widget.client.setShowWatched(_title.media.id, _watch!.version, !_title.played),
+                              () => widget.client.setSeriesWatched(_title.media.id, _watch!.version, !_title.played),
                             ),
                       icon: Icon(_title.played ? Icons.check_circle : Icons.check_circle_outline),
-                      label: Text(_title.played ? 'Mark show unwatched' : 'Mark show watched'),
+                      label: Text(_title.played ? 'Mark series unwatched' : 'Mark series watched'),
                     ),
                   ),
                 ],
@@ -312,7 +312,10 @@ class TedSeriesDetailState extends State<TedSeriesDetail> {
                       index: season,
                       leafCount: _watch?.seasonCounts[season]?.$1,
                       viewedLeafCount: _watch?.seasonCounts[season]?.$2,
-                      raw: {'joint_watches': _watch?.jointCounts[season]?.map((w) => w.toJson()).toList() ?? []},
+                      raw: {
+                        'user_watches': _watch?.userCounts[season]?.map((w) => w.toJson()).toList() ?? [],
+                        'joint_watches': _watch?.jointCounts[season]?.map((w) => w.toJson()).toList() ?? [],
+                      },
                       thumbPath: _title.poster,
                     ),
                 ],

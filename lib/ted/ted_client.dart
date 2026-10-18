@@ -1,4 +1,5 @@
 import 'ted_joint_watch.dart';
+import 'ted_user_watch.dart';
 import 'dart:convert';
 import 'ted_source_cache.dart';
 import 'ted_home_cache.dart';
@@ -16,6 +17,7 @@ import '../utils/app_logger.dart';
 import 'package:http/http.dart' as http;
 
 class TedTitle {
+  final List<TedUserWatch> userWatches;
   final List<TedJointWatch> jointWatches;
   final TedMediaIdentity media;
   final String name;
@@ -44,6 +46,7 @@ class TedTitle {
     this.revision,
     this.positionMs,
     this.local, {
+    this.userWatches = const [],
     this.jointWatches = const [],
     this.ready = false,
     this.poster = '',
@@ -76,6 +79,7 @@ class TedTitle {
     revision,
     positionMs,
     local,
+    userWatches: userWatches,
     jointWatches: jointWatches,
     ready: ready,
     poster: poster,
@@ -119,6 +123,9 @@ class TedTitle {
         state['revision'] as int,
         state['position_ms'] as int,
         data['local_available'] as bool,
+        userWatches: ((data['user_watches'] as List?) ?? [])
+            .map((e) => TedUserWatch.fromJson(Map<String, dynamic>.from(e as Map)))
+            .toList(),
         jointWatches: ((data['joint_watches'] as List?) ?? [])
             .map((e) => TedJointWatch.fromJson(Map<String, dynamic>.from(e as Map)))
             .toList(),
@@ -217,7 +224,7 @@ class TedCatalogIssue {
   String get message => switch (code) {
     'catalog_cached' => 'Showing saved metadata while Cinemeta is unavailable.',
     'schedule_unavailable' =>
-      'Episode schedule unavailable for ${media?.id ?? 'a show'}. Next Up is incomplete; TED will retry.',
+      'Episode schedule unavailable for ${media?.id ?? 'a series'}. Next Up is incomplete; TED will retry.',
     'metadata_unavailable' => 'Some saved title details are unavailable.',
     _ => 'Cinemeta is unavailable. Retry to load this row.',
   };
@@ -372,7 +379,7 @@ class TedClient {
     return result;
   }
 
-  Future<TedSeriesWatch> showWatch(String id) async {
+  Future<TedSeriesWatch> seriesWatch(String id) async {
     if (!TedMediaIdentity('series', id).valid) throw const TedFailure('invalid_response');
     return TedSeriesWatch.fromJson(
       await auth.json('GET', '/api/client/v1/titles/series/${Uri.encodeComponent(id)}/watch-state'),
@@ -380,7 +387,7 @@ class TedClient {
     );
   }
 
-  Future<void> setShowWatched(String id, String version, bool watched) async {
+  Future<void> setSeriesWatched(String id, String version, bool watched) async {
     if (!TedMediaIdentity('series', id).valid || !RegExp(r'^[a-f0-9]{64}$').hasMatch(version)) {
       throw const TedFailure('invalid_response');
     }
@@ -482,6 +489,52 @@ class TedClient {
   Future<Uint8List?> metadataImage(String id) async {
     final response = await auth.artwork(id);
     return _imageBytes(response);
+  }
+
+  final _userPictures = <String, Future<Uint8List?>>{};
+  final _userPictureFailures = <String, DateTime>{};
+  Future<Uint8List?> userPicture(TedUserWatch watch) {
+    if (watch.avatarVersion.isEmpty) return Future.value(null);
+    final key = '$_sourceScope/${watch.accountId}/${watch.avatarVersion}';
+    final failed = _userPictureFailures[key];
+    if (failed != null && auth.now().difference(failed) >= const Duration(minutes: 1)) {
+      _userPictures.remove(key);
+      _userPictureFailures.remove(key);
+    }
+    if (_userPictures.length >= 64 && !_userPictures.containsKey(key)) {
+      final oldest = _userPictures.keys.first;
+      _userPictures.remove(oldest);
+      _userPictureFailures.remove(oldest);
+    }
+    final cached = _userPictures[key];
+    if (cached != null) return cached;
+    late final Future<Uint8List?> pending;
+    pending = _fetchUserPicture(watch).then((image) {
+      if (image == null && identical(_userPictures[key], pending)) _userPictureFailures[key] = auth.now();
+      return image;
+    });
+    _userPictures[key] = pending;
+    return pending;
+  }
+
+  Future<Uint8List?> _fetchUserPicture(TedUserWatch watch) async {
+    try {
+      final response = await auth.userPicture(watch.accountId);
+      if (response.statusCode == 204 || response.headers['content-type']?.split(';').first != 'image/png') {
+        return null;
+      }
+      final data = response.bodyBytes;
+      const signature = [137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82];
+      if (data.length < 33 || data.length > 512 << 10) return null;
+      for (var i = 0; i < signature.length; i++) {
+        if (data[i] != signature[i]) return null;
+      }
+      final dimensions = ByteData.sublistView(data);
+      if (dimensions.getUint32(16) != 256 || dimensions.getUint32(20) != 256) return null;
+      return data;
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<Uint8List?> personPortrait(String id) async => _imageBytes(await auth.personPortrait(id));

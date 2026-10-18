@@ -233,7 +233,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.getTopLeft(find.text('Episode')).dx, greaterThan(tester.getTopLeft(find.text('Season 1')).dx));
     expect(tester.takeException(), isNull);
-    await tester.tap(find.byTooltip('Delete all downloaded episodes of this show'));
+    await tester.tap(find.byTooltip('Delete all downloaded episodes of this series'));
     await tester.pumpAndSettle();
     expect(manager.removed, {const TedMediaIdentity('episode', 'tt1234567:1:1')});
     expect(find.text('Zulu show'), findsNothing);
