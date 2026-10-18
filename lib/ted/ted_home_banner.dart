@@ -23,10 +23,14 @@ class TedHomeBanner extends StatefulWidget {
   final double? maxHeight;
   final double? contentHorizontalInset;
 
-  /// TV catalogue spotlight: one passive title, with debounced enrichment.
+  /// Static passive layout, shared by catalogue spotlights and detail headers.
   final bool catalogPreview;
   final bool debounceEnrichment;
   final bool loadDetails;
+
+  /// Catalogue focus uses Cinemeta summaries only. Disable all provider detail,
+  /// polling and image work, including enrichment already attached to a title.
+  final bool enrichMetadata;
 
   /// Detail pages keep the shared backdrop/logo while adding season or
   /// episode artwork to the left of its normal text block.
@@ -50,6 +54,7 @@ class TedHomeBanner extends StatefulWidget {
     this.catalogPreview = false,
     this.debounceEnrichment = true,
     this.loadDetails = true,
+    this.enrichMetadata = true,
     this.leadingArtwork,
     this.leadingAspectRatio = 2 / 3,
     this.detailHeading,
@@ -124,6 +129,7 @@ class TedHomeBannerState extends State<TedHomeBanner> with WidgetsBindingObserve
     super.didUpdateWidget(oldWidget);
     if (oldWidget.client != widget.client ||
         oldWidget.catalogPreview != widget.catalogPreview ||
+        oldWidget.enrichMetadata != widget.enrichMetadata ||
         oldWidget.refreshEpoch != widget.refreshEpoch ||
         !listEquals(oldWidget.entries, widget.entries) ||
         _scope != (widget.client.auth.server, widget.client.auth.userId)) {
@@ -160,11 +166,14 @@ class TedHomeBannerState extends State<TedHomeBanner> with WidgetsBindingObserve
     _scope = scope;
     _slides = [
       for (final title in widget.entries)
-        _BannerSlide(title)
-          ..visual = old[title.media]?.visual
-          ..metadata = title.enrichment ?? old[title.media]?.metadata
-          ..backdrop = old[title.media]?.backdrop
-          ..logo = old[title.media]?.logo,
+        if (!widget.enrichMetadata)
+          _BannerSlide(title)..loading = false
+        else
+          _BannerSlide(title)
+            ..visual = old[title.media]?.visual
+            ..metadata = title.enrichment ?? old[title.media]?.metadata
+            ..backdrop = old[title.media]?.backdrop
+            ..logo = old[title.media]?.logo,
     ];
     _index = math.max(0, _slides.indexWhere((s) => s.title.media == current));
     final generation = ++_generation;
@@ -172,6 +181,7 @@ class TedHomeBannerState extends State<TedHomeBanner> with WidgetsBindingObserve
       if (!_valid(generation, scope)) return;
       if (_pages.hasClients) _pages.jumpToPage(_index);
       _schedule();
+      if (!widget.enrichMetadata) return;
       if (widget.catalogPreview && widget.debounceEnrichment && _slides.any((s) => s.metadata == null)) {
         _enrichmentTimer = Timer(const Duration(milliseconds: 100), () {
           if (_valid(generation, scope) && ModalRoute.of(context)?.isCurrent != false) {
@@ -535,11 +545,16 @@ class TedHomeBannerState extends State<TedHomeBanner> with WidgetsBindingObserve
           height: height,
           fallbackColor: theme.colorScheme.surfaceContainerHighest,
           active: active,
-          imageProviderResolver: (path) => ResizeImage.resizeIfNeeded(
-            1920,
-            null,
-            path == background && slide.backdrop != null ? MemoryImage(slide.backdrop!) : NetworkImage(path),
-          ),
+          // The shared path provides disk caching, request admission and
+          // two-axis, device-aware decode bounds for Cinemeta backdrops (or
+          // tall poster fallbacks). A width-only 1920 decode bypasses those.
+          imageProviderResolver: !widget.enrichMetadata
+              ? null
+              : (path) => ResizeImage.resizeIfNeeded(
+                  1920,
+                  null,
+                  path == background && slide.backdrop != null ? MemoryImage(slide.backdrop!) : NetworkImage(path),
+                ),
         ),
       ),
     );

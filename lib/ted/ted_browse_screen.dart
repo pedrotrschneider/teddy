@@ -729,6 +729,7 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
                   entries: [selection],
                   refreshEpoch: _catalogEpoch,
                   catalogPreview: true,
+                  enrichMetadata: false,
                   contentHorizontalInset: _catalogContentInset,
                   onPlay: _playBanner,
                   onOpen: _open,

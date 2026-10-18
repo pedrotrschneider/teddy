@@ -164,6 +164,7 @@ void main() {
     bool dark = true,
     bool reducedMotion = false,
     bool catalogPreview = false,
+    bool enrichMetadata = true,
     Future<void> Function(TedTitle)? play,
     VoidCallback? back,
   }) async {
@@ -194,6 +195,7 @@ void main() {
                         entries: entries,
                         refreshEpoch: epoch,
                         catalogPreview: catalogPreview,
+                        enrichMetadata: enrichMetadata,
                         onPlay:
                             play ??
                             (_) {
@@ -219,6 +221,36 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     addTearDown(client.auth.close);
   }
+
+  testWidgets('summary spotlight ignores attached queued enrichment; detail headers still poll and load artwork', (
+    tester,
+  ) async {
+    final client = BannerFixture()..images = true;
+    cleanup(tester, client);
+    final entry = TedTitle.fromJson({
+      ...titleData(),
+      'metadata': {'name': 'Cinemeta title', 'description': 'Cinemeta overview'},
+      'enrichment': metadataData(status: 'queued', images: true),
+    });
+    await mount(tester, client, [entry], catalogPreview: true, enrichMetadata: false);
+    await tester.pump(const Duration(seconds: 3));
+    expect(find.text('Cinemeta title'), findsOneWidget);
+    expect(find.text('Cinemeta overview'), findsOneWidget);
+    expect(find.text('Provider title'), findsNothing);
+    expect(client.requests, isEmpty);
+    expect(client.polls, 0);
+    expect(client.imageRequests, 0);
+    // Detail headers use the same passive layout, but retain enrichment.
+    await mount(tester, client, [entry], catalogPreview: true);
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    expect(find.text('Provider title'), findsOneWidget);
+    expect(client.polls, 1);
+    expect(client.imageRequests, 2);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('cached spotlight description is immediate and cached artwork starts without the dwell delay', (
     tester,

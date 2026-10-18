@@ -14,6 +14,7 @@ import 'package:plezy/ted/ted_home_banner.dart';
 import 'package:plezy/ted/ted_models.dart';
 import 'package:plezy/theme/mono_theme.dart';
 import 'package:plezy/utils/platform_detector.dart';
+import 'package:plezy/utils/app_logger.dart';
 import 'package:plezy/widgets/hub_section.dart';
 import 'package:plezy/widgets/media_card.dart';
 import 'package:plezy/widgets/optimized_media_image.dart';
@@ -353,57 +354,43 @@ void main() {
     }
   });
 
-  testWidgets('TV spotlight waits 100ms, debounces rapid selection, ignores stale metadata and stays passive', (
-    tester,
-  ) async {
+  testWidgets('TV movie and series navigation never fetches detail metadata before opening a title', (tester) async {
     final client = CatalogBrowseFixture();
     await mount(tester, client);
-    final banner = find.byKey(const ValueKey('catalog-banner'));
-    // Initial title has remained selected during the sidebar's width transition.
-    client.details.clear();
-    expect(find.byType(HubSection), findsOneWidget);
-    expect(find.text('Load more'), findsNothing);
-    expect(find.descendant(of: banner, matching: find.byType(IconButton)), findsNothing);
-    expect(find.descendant(of: banner, matching: find.byType(FilledButton)), findsNothing);
-    await key(tester, LogicalKeyboardKey.arrowRight, settle: Duration.zero); // shelf
-    final shelfBeforeSelection = tester.widget<HubSection>(find.byType(HubSection));
-    await key(tester, LogicalKeyboardKey.arrowRight, settle: Duration.zero); // title 1
-    await tester.pump(const Duration(milliseconds: 99));
-    expect(client.details, isEmpty);
-    await key(tester, LogicalKeyboardKey.arrowRight, settle: Duration.zero); // title 2
-    await tester.pump(const Duration(milliseconds: 99));
-    expect(client.details, isEmpty);
-    expect(find.descendant(of: banner, matching: find.text('Title 2')), findsOneWidget);
-    expect(
-      tester.widget<HubSection>(find.byType(HubSection)),
-      same(shelfBeforeSelection),
-      reason: 'Fast focus changes rebuild the spotlight, not every shelf card',
-    );
-    client.heldDetail = Completer<TedTitle>();
-    await tester.pump(const Duration(milliseconds: 1));
-    await tester.pump();
-    expect(client.details.map((m) => m.id), ['tt4000002']);
-    await key(tester, LogicalKeyboardKey.arrowRight, settle: Duration.zero); // title 3
-    client.heldDetail!.complete(
-      TedTitle.fromJson({
-        ...titleData(id: 'tt4000002'),
-        'metadata': {'name': 'Stale title'},
-      }),
-    );
-    client.heldDetail = null;
-    await tester.pump();
-    expect(find.text('Stale title'), findsNothing);
-    expect(find.descendant(of: banner, matching: find.text('Title 3')), findsOneWidget);
-    await tester.pump(const Duration(milliseconds: 99));
-    expect(client.details.map((m) => m.id), ['tt4000002']);
-    await tester.pump(const Duration(milliseconds: 1));
-    await tester.pump();
-    expect(client.details.map((m) => m.id), ['tt4000002', 'tt4000003']);
-    expect(find.text('Enriched tt4000003'), findsOneWidget);
-    await key(tester, LogicalKeyboardKey.arrowUp); // controls
-    final filterFocus = FocusManager.instance.primaryFocus;
-    await key(tester, LogicalKeyboardKey.arrowUp); // top edge stays on filters
-    expect(FocusManager.instance.primaryFocus, same(filterFocus));
+    for (final section in ['Movies', 'Series']) {
+      await tester.tap(destination(section));
+      await tester.pumpAndSettle();
+      client.details.clear();
+      final banner = find.byKey(const ValueKey('catalog-banner'));
+      expect(find.descendant(of: banner, matching: find.byType(IconButton)), findsNothing);
+      expect(find.descendant(of: banner, matching: find.byType(FilledButton)), findsNothing);
+      await key(tester, LogicalKeyboardKey.arrowRight, settle: Duration.zero);
+      // Index 4 triggers legitimate pagination; measure focus-only rebuilds before that boundary.
+      final shelf = tester.widget<HubSection>(find.byType(HubSection));
+      for (var i = 1; i <= 3; i++) {
+        await key(tester, LogicalKeyboardKey.arrowRight, settle: const Duration(milliseconds: 150));
+        expect(find.descendant(of: banner, matching: find.text('Title $i')), findsOneWidget);
+      }
+      await tester.pump(const Duration(seconds: 2));
+      expect(client.details, isEmpty, reason: '$section navigation/dwell must not load provider details');
+      expect(
+        tester.widget<HubSection>(find.byType(HubSection)),
+        same(shelf),
+        reason: 'Focus changes must rebuild only the spotlight',
+      );
+      await key(tester, LogicalKeyboardKey.arrowUp);
+      final filterFocus = FocusManager.instance.primaryFocus;
+      await key(tester, LogicalKeyboardKey.arrowUp);
+      expect(FocusManager.instance.primaryFocus, same(filterFocus));
+      await key(tester, LogicalKeyboardKey.arrowDown);
+      await key(tester, LogicalKeyboardKey.enter);
+      expect(
+        client.details.map((m) => m.id),
+        contains('tt4000003'),
+        reason: 'Explicit details must still request provider enrichment',
+      );
+      await key(tester, LogicalKeyboardKey.escape);
+    }
     await tester.pumpWidget(const SizedBox.shrink());
     expect(tester.takeException(), isNull);
   });
@@ -472,6 +459,26 @@ void main() {
       'next_skip': 50,
     };
     await expectLater(client.browse('movie', skip: 50), throwsA(isA<TedFailure>()));
+    MemoryLogOutput.clearLogs();
+    response = {
+      'titles': [titleData()],
+      'next_skip': null,
+    };
+    await client.browse('movie', search: 'private-query-value');
+    response = {...response, 'next_skip': 50};
+    await expectLater(client.browse('movie', search: 'private-query-value'), throwsA(isA<TedFailure>()));
+    final messages = MemoryLogOutput.getLogs()
+        .map((entry) => entry.message)
+        .where((m) => m.startsWith('Catalog page'))
+        .toList();
+    expect(messages, hasLength(2));
+    expect(messages.any((m) => m.contains('loaded kind=movie mode=search')), isTrue);
+    expect(messages.any((m) => m.contains('failed kind=movie mode=search')), isTrue);
+    for (final message in messages) {
+      expect(message, matches(RegExp(r'elapsed_ms=\d+')));
+      expect(message, isNot(contains('private-query-value')));
+      expect(message, isNot(contains('/api/')));
+    }
   });
 
   testWidgets('TV paging crosses empty genre pages and retries a failed page without clearing cards', (tester) async {

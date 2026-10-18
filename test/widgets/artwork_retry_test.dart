@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' show PointerDeviceKind;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -17,10 +18,12 @@ import 'package:plezy/focus/input_mode_tracker.dart';
 import 'package:plezy/services/settings_service.dart';
 import 'package:plezy/ted/ted_browse_screen.dart';
 import 'package:plezy/ted/ted_client.dart';
+import 'package:plezy/ted/ted_home_banner.dart';
 import 'package:plezy/theme/mono_theme.dart';
 import 'package:plezy/utils/platform_detector.dart';
 import '../ted/ted_browse_test.dart' show BrowseFixture;
 import '../ted/ted_catalog_test.dart' show titleData;
+import '../ted/ted_home_banner_test.dart' show BannerFixture;
 import '../test_helpers/prefs.dart';
 
 final _pixel = base64Decode(
@@ -96,7 +99,7 @@ class _PosterBrowse extends BrowseFixture {
 
 void main() {
   late Directory directory;
-  late FileInfo good, corrupt;
+  late FileInfo good, corrupt, portrait;
   late http.Response Function(Uri) response;
   late List<Uri> requests;
   setUpAll(() async {
@@ -109,6 +112,16 @@ void main() {
     good = await cache.getFileStream('https://fixture.invalid/good').firstWhere((v) => v is FileInfo) as FileInfo;
     corrupt = await cache.getFileStream('https://fixture.invalid/corrupt').firstWhere((v) => v is FileInfo) as FileInfo;
     await cache.dispose();
+    final recording = ui.PictureRecorder();
+    ui.Canvas(recording).drawColor(const Color(0xff39505a), ui.BlendMode.src);
+    final picture = recording.endRecording();
+    final image = await picture.toImage(1600, 2400);
+    final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+    final file = good.file.parent.childFile('portrait.png');
+    await file.writeAsBytes(bytes!.buffer.asUint8List());
+    image.dispose();
+    picture.dispose();
+    portrait = FileInfo(file, FileSource.Cache, DateTime.now().add(const Duration(days: 1)), 'portrait');
   });
   tearDownAll(() => directory.delete(recursive: true));
   setUp(() {
@@ -169,6 +182,51 @@ void main() {
       PaintingBinding.instance.imageCache.clearLiveImages();
     });
   }
+
+  testWidgets('Cinemeta spotlight bounds portrait decoding on both axes and reuses the shared disk cache', (
+    tester,
+  ) async {
+    await initialize(tester);
+    DevicePerformance.debugReset(autoReduced: true);
+    PlexImageCacheManager.debugInstance = _Cache(directory, requests, (url) => response(url), portrait, corrupt);
+    final client = BannerFixture();
+    addTearDown(client.auth.close);
+    final title = TedTitle.fromJson({
+      ...titleData(),
+      'metadata': {'name': 'Portrait fallback', 'poster': 'https://images.metahub.space/portrait.png'},
+    });
+    Widget preview() => MaterialApp(
+      home: Scaffold(
+        body: TedHomeBanner(
+          client: client,
+          entries: [title],
+          refreshEpoch: 0,
+          catalogPreview: true,
+          enrichMetadata: false,
+          onPlay: (_) async {},
+          onOpen: (_) async {},
+          onBack: () {},
+        ),
+      ),
+    );
+    await tester.pumpWidget(preview());
+    await loaded(tester, failed: false, count: 1);
+    final decoded = tester.widgetList<RawImage>(find.byType(RawImage)).map((w) => w.image).whereType<ui.Image>().single;
+    expect(decoded.width, lessThanOrEqualTo(480));
+    expect(decoded.height, lessThanOrEqualTo(720));
+    expect(decoded.width / decoded.height, closeTo(2 / 3, .01));
+    expect(client.requests, isEmpty);
+    expect(client.polls, 0);
+    expect(client.imageRequests, 0);
+    await tester.pumpWidget(const SizedBox.shrink());
+    await io(tester);
+    PaintingBinding.instance.imageCache.clear();
+    PaintingBinding.instance.imageCache.clearLiveImages();
+    await tester.pumpWidget(preview());
+    await loaded(tester, failed: false, count: 1);
+    expect(requests, hasLength(1), reason: 'Revisiting after memory eviction must reuse cached Cinemeta bytes');
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('posters remain painted after leaving and returning to a lazy horizontal list', (tester) async {
     final scroll = ScrollController();

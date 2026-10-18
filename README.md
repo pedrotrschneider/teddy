@@ -40,11 +40,11 @@ Credentials live in one verified OS-backed bundle using flutter_secure_storage10
 
 ## Browsing and navigation
 
-Sidebar: Search, Home, Movies, Shows, Downloads; footer Reload, Settings, Account. Enter/click activates destinations; hover/focus alone does not. Keyboard focus is a white outline independent of current-page selection. The sidebar collapses to equal-width desktop/TV icons unless hovered, focused or configured always-open.
+Sidebar: Search, Home, Movies, Series, Downloads; footer Reload, Settings, Account. Enter/click activates destinations; hover/focus alone does not. Keyboard focus is a white outline independent of current-page selection. The sidebar collapses to equal-width desktop/TV icons unless hovered, focused or configured always-open.
 
 Home persists Continue Watching, New Releases, Next Up, Popular Movies and Popular Shows locally per server/account/device. Cached rows appear while independent updates run; complete empty success replaces them, failures preserve usable snapshots. No per-row Loading labels. A first uncached load can show one progress line. Below 15% playback does not create new viewing/resume/CW; completion still uses 90%, with explicit watched/Next exceptions. Older saved progress remains intact.
 
-Movies/Shows use a desktop grid or TV static spotlight plus one horizontally paginated row. Filters align with banner text/cards. Search uses only Type and query. Missing TV spotlight metadata fetches after 100 ms; cache hits show immediately. Use shared Home poster sizing and gold IMDb score before year.
+Movies/Series use a desktop grid or TV static spotlight plus one horizontally paginated row. Filters align with banner text/cards. Search uses only Type and query. TV spotlights show Cinemeta summaries/artwork immediately and never fetch/poll descriptive provider metadata or artwork while navigating or dwelling; opening details loads enrichment. Cached user-edited posters remain available. Cinemeta spotlight backdrops use the shared disk cache, request limit and device-aware decode bounds on both axes. Use shared Home poster sizing and gold IMDb score before year. Catalog page success/failure logs include bounded mode/count/duration fields, excluding search terms and URLs.
 
 Right from sidebar restores the remembered media section, not filters or always the first row. Up accesses filters where present. Holding Left stops at the first card until a new press exits to sidebar. Home's first actual visible row reveals the hero while keeping the row visible; Up there does nothing. Mouse hover is visual only and never changes keyboard focus/selection/scroll. Wheel/drag/click remain normal.
 

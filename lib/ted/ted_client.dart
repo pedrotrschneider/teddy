@@ -786,14 +786,30 @@ class TedClient {
         'after': ?after,
       },
     ).query;
-    final page = TedCatalogPage.fromJson(await auth.json('GET', '/api/client/v1/catalog/$kind?$query'));
-    if (page.titles.any((title) => title.media.kind != kind) ||
-        (search.isNotEmpty && (page.nextSkip != null || page.nextAfter != null)) ||
-        (page.nextSkip != null && page.nextSkip! <= skip) ||
-        page.nextAfter != null && page.nextAfter == after) {
-      throw const TedFailure('invalid_response');
+    final timer = Stopwatch()..start();
+    final mode = search.isNotEmpty
+        ? 'search'
+        : ['popular', 'new'].contains(catalog)
+        ? catalog
+        : 'filtered';
+    try {
+      final page = TedCatalogPage.fromJson(await auth.json('GET', '/api/client/v1/catalog/$kind?$query'));
+      if (page.titles.any((title) => title.media.kind != kind) ||
+          (search.isNotEmpty && (page.nextSkip != null || page.nextAfter != null)) ||
+          (page.nextSkip != null && page.nextSkip! <= skip) ||
+          page.nextAfter != null && page.nextAfter == after) {
+        throw const TedFailure('invalid_response');
+      }
+      appLogger.i(
+        'Catalog page loaded kind=$kind mode=$mode skip=$skip titles=${page.titles.length} elapsed_ms=${timer.elapsedMilliseconds}',
+      );
+      return page;
+    } catch (error) {
+      appLogger.w(
+        'Catalog page failed kind=$kind mode=$mode skip=$skip elapsed_ms=${timer.elapsedMilliseconds} failure=${error is TedFailure ? error.code : error.runtimeType}',
+      );
+      rethrow;
     }
-    return page;
   }
 
   Future<TedTitle> title(TedMediaIdentity media) async {

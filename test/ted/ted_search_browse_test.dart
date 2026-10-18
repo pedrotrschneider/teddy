@@ -301,31 +301,25 @@ void main() {
     },
   );
 
-  testWidgets('Search spotlight starts enrichment only after 100ms on the same focused title', (tester) async {
+  testWidgets('Search title focus and long dwell do not fetch details before an explicit open', (tester) async {
     final client = SearchFixture();
     await mount(tester, client, tv: true);
     await tester.tap(nav('Search'));
     await tester.pumpAndSettle();
+    client.details.clear();
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
     await tester.pump();
     final hub = tester.state<HubSectionState>(shelf('movie'));
-    hub.requestFocusAt(1);
-    await tester.pump();
-    await tester.pump();
-    final count = client.details.length;
-    await tester.pump(const Duration(milliseconds: 50));
-    expect(client.details.length, count);
-    hub.requestFocusAt(2);
-    await tester.pump();
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 99));
-    expect(client.details.length, count);
-    await tester.pump(const Duration(milliseconds: 1));
-    await tester.pump();
-    expect(client.details.last.id, 'tt4000002');
-    expect(client.details.length, count + 1);
-    expect(tester.widget<TedHomeBanner>(banner).entries.single.media.id, 'tt4000002');
-    await tester.pumpAndSettle();
+    for (var i = 1; i <= 4; i++) {
+      hub.requestFocusAt(i);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 150));
+    }
+    await tester.pump(const Duration(seconds: 2));
+    expect(client.details, isEmpty, reason: 'Search focus must not start metadata lookups');
+    expect(tester.widget<TedHomeBanner>(banner).entries.single.media.id, 'tt4000004');
+    await key(tester, LogicalKeyboardKey.enter);
+    expect(client.details.map((m) => m.id), contains('tt4000004'));
     expect(tester.takeException(), isNull);
   });
 }
