@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+import 'ted_rating.dart';
 import 'ted_joint_watch.dart';
 import 'ted_user_watch.dart';
 import 'dart:convert';
@@ -12,11 +14,12 @@ import 'ted_source_models.dart';
 import 'ted_metadata_models.dart';
 import 'ted_series_models.dart';
 import 'ted_download_watch.dart';
-import 'dart:typed_data';
 import '../utils/app_logger.dart';
 import 'package:http/http.dart' as http;
 
 class TedTitle {
+  final bool watchlist;
+  final int? userRating;
   final List<TedUserWatch> userWatches;
   final List<TedJointWatch> jointWatches;
   final TedMediaIdentity media;
@@ -46,6 +49,8 @@ class TedTitle {
     this.revision,
     this.positionMs,
     this.local, {
+    this.watchlist = false,
+    this.userRating,
     this.userWatches = const [],
     this.jointWatches = const [],
     this.ready = false,
@@ -71,7 +76,9 @@ class TedTitle {
     this.enrichment,
     this.releaseDate,
   });
-  TedTitle withEnrichment(TedMetadataSnapshot snapshot) => TedTitle(
+  TedTitle withEnrichment(TedMetadataSnapshot snapshot) => _copy(enrichment: snapshot);
+  TedTitle withPreferences(TedTitlePreferences preferences) => _copy(preferences: preferences);
+  TedTitle _copy({TedMetadataSnapshot? enrichment, TedTitlePreferences? preferences}) => TedTitle(
     media,
     name,
     description,
@@ -79,6 +86,8 @@ class TedTitle {
     revision,
     positionMs,
     local,
+    watchlist: preferences?.watchlist ?? watchlist,
+    userRating: preferences == null ? userRating : preferences.rating,
     userWatches: userWatches,
     jointWatches: jointWatches,
     ready: ready,
@@ -101,11 +110,12 @@ class TedTitle {
     watchedEpisodeCount: watchedEpisodeCount,
     seasons: seasons,
     issues: issues,
-    enrichment: snapshot,
+    enrichment: enrichment ?? this.enrichment,
     releaseDate: releaseDate,
   );
   factory TedTitle.fromJson(Map<String, dynamic> data) {
     try {
+      final preferences = TedTitlePreferences.fromJson(data);
       final media = TedMediaIdentity.fromJson(data['media'] as Map<String, dynamic>);
       final meta = data['metadata'] as Map<String, dynamic>;
       final state = data['watch_state'] as Map<String, dynamic>;
@@ -123,6 +133,8 @@ class TedTitle {
         state['revision'] as int,
         state['position_ms'] as int,
         data['local_available'] as bool,
+        watchlist: preferences.watchlist,
+        userRating: preferences.rating,
         userWatches: ((data['user_watches'] as List?) ?? [])
             .map((e) => TedUserWatch.fromJson(Map<String, dynamic>.from(e as Map)))
             .toList(),
@@ -322,7 +334,14 @@ class TedHomeRow {
   factory TedHomeRow.fromJson(Map<String, dynamic> data) {
     try {
       final id = data['id'] as String;
-      if (!['continue-watching', 'new-releases', 'next-up', 'popular-movie', 'popular-series'].contains(id)) {
+      if (![
+        'continue-watching',
+        'new-releases',
+        'next-up',
+        'watchlist',
+        'popular-movie',
+        'popular-series',
+      ].contains(id)) {
         throw const TedFailure('invalid_response');
       }
       return TedHomeRow(
@@ -850,8 +869,43 @@ class TedClient {
     }
   }
 
+  Future<TedTitlePreferences> setTitlePreference(
+    TedMediaIdentity media,
+    String field, {
+    bool? watchlist,
+    int? rating,
+  }) async {
+    if (!['movie', 'series'].contains(media.kind) || !media.valid || !['watchlist', 'rating'].contains(field)) {
+      throw const TedFailure('invalid_response');
+    }
+    final scope = _sourceScope;
+    final state = TedTitlePreferences.fromJson(
+      await auth.json(
+        'PUT',
+        '/api/client/v1/titles/${media.kind}/${Uri.encodeComponent(media.id)}/preferences/$field',
+        body: field == 'watchlist' ? {'watchlist': watchlist} : {'user_rating': rating},
+      ),
+    );
+    if (scope != _sourceScope) throw const TedFailure('sign_in_required');
+    return state;
+  }
+
+  Future<TedPersonalPage> collection(String list, {String kind = '', String? after}) async {
+    if (list != 'watchlist' && !RegExp(r'^ratings/[0-7]$').hasMatch(list)) throw const TedFailure('invalid_response');
+    final q = Uri(queryParameters: {'kind': kind, 'after': after ?? ''}).query;
+    final page = TedPersonalPage.fromJson(await auth.json('GET', '/api/client/v1/collections/$list?$q'));
+    if (page.titles.any(
+      (t) => !['movie', 'series'].contains(t.media.kind) || (kind.isNotEmpty && t.media.kind != kind),
+    )) {
+      throw const TedFailure('invalid_response');
+    }
+    return page;
+  }
+
   Future<TedPersonalPage> personal(String row, {String? after}) async {
-    if (!['continue-watching', 'new-releases', 'next-up'].contains(row)) throw const TedFailure('invalid_response');
+    if (!['continue-watching', 'new-releases', 'next-up', 'watchlist'].contains(row)) {
+      throw const TedFailure('invalid_response');
+    }
     return TedPersonalPage.fromJson(
       await auth.json(
         'GET',
@@ -879,13 +933,24 @@ class TedClient {
     final generation = ++_homeGeneration;
     final scope = _sourceScope;
     bool current() => generation == _homeGeneration && scope == _sourceScope && auth.signedIn;
-    const ids = ['continue-watching', 'new-releases', 'next-up', 'popular-movie', 'popular-series'];
+    const ids = ['continue-watching', 'new-releases', 'next-up', 'watchlist', 'popular-movie', 'popular-series'];
     final rows = [for (final id in ids) TedHomeRow(id, const [], false, const [], loading: true)];
     for (var i = 0; i < ids.length; i++) {
       try {
         rows[i] = await homeCache?.read(scope, ids[i]) ?? rows[i];
       } catch (_) {
         appLogger.w('Home shelf cache could not be read; fetching current data');
+      }
+    }
+    for (var i = 0; i < rows.length; i++) {
+      if (rows[i].id == 'watchlist') {
+        rows[i] = TedHomeRow(
+          'watchlist',
+          [...rows[i].titles]..shuffle(),
+          rows[i].unavailable,
+          rows[i].issues,
+          loading: rows[i].loading,
+        );
       }
     }
     if (!current()) return const [];

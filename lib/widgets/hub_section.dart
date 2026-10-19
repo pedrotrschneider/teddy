@@ -270,7 +270,7 @@ class HubSectionState extends State<HubSection> with MountedSetStateMixin, Skele
   }
 
   /// Request focus on this hub at a specific item index
-  void requestFocusAt(int index) {
+  void requestFocusAt(int index, {bool reveal = true}) {
     if (_totalItemCount == 0) return;
 
     final clamped = index.clamp(0, _totalItemCount - 1).toInt();
@@ -283,13 +283,13 @@ class HubSectionState extends State<HubSection> with MountedSetStateMixin, Skele
     // ignore: no-empty-block - setState triggers rebuild to update focus styling
     setStateIfMounted(() {});
 
-    _scrollHubIntoView();
+    if (reveal) _scrollHubIntoView();
   }
 
   /// Request focus using the stored memory for this hub
-  void requestFocusFromMemory() {
+  void requestFocusFromMemory({bool reveal = true}) {
     final index = widget.focusMemory.getForHub(_focusMemoryKey, _totalItemCount);
-    requestFocusAt(index);
+    requestFocusAt(index, reveal: reveal);
   }
 
   /// Scroll this hub into view in the parent scroll view

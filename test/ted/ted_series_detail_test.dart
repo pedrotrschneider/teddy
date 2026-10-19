@@ -265,7 +265,9 @@ void main() {
     }
   }
 
-  testWidgets('Series entry retains season navigation, controls and sidebar through the full Back flow', (tester) async {
+  testWidgets('Series entry retains season navigation, controls and sidebar through the full Back flow', (
+    tester,
+  ) async {
     final client = SeriesDetailFixture();
     var downloads = 0;
     final seasonDownloads = <int>[];
@@ -292,7 +294,7 @@ void main() {
     await tester.tap(showCard);
     await tester.pumpAndSettle();
     expect(find.byType(TedSeriesDetail), findsOneWidget);
-    expect(find.byType(NavigationRailItem), findsNWidgets(8));
+    expect(find.byType(NavigationRailItem), findsNWidgets(10));
     expect(find.text('Next Up'), findsNothing);
     expect(find.text('Start from the beginning'), findsNothing);
     await tester.tap(find.text('Download series'));
@@ -317,7 +319,7 @@ void main() {
     await tester.tap(epCard);
     await tester.pumpAndSettle();
     expect(find.byType(TedEpisodeDetail), findsOneWidget);
-    expect(find.byType(NavigationRailItem), findsNWidgets(8));
+    expect(find.byType(NavigationRailItem), findsNWidgets(10));
     expect(find.text('Only this episode description'), findsOneWidget);
     expect(find.text('Guest performer'), findsNothing);
     expect(find.text('Show performer'), findsOneWidget);

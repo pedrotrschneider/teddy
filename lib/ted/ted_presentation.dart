@@ -1,3 +1,4 @@
+import 'ted_rating.dart';
 import '../media/media_hub.dart';
 import '../media/media_item.dart';
 import '../media/media_kind.dart';
@@ -39,6 +40,8 @@ class TedPresentation {
     viewedLeafCount: title.watchedEpisodeCount,
     rating: title.rating,
     raw: {
+      'watchlist': title.watchlist,
+      'user_rating': title.userRating,
       'imdb_rating': title.rating,
       'user_watches': title.userWatches.map((w) => w.toJson()).toList(),
       'joint_watches': title.jointWatches.map((w) => w.toJson()).toList(),
@@ -52,17 +55,21 @@ class TedPresentation {
     items: row.titles.map(item).toList(),
     serverId: scope,
   );
-  static String rowName(String id) => switch (id) {
-    'continue-watching' => 'Continue Watching',
-    'new-releases' => 'New Releases',
-    'next-up' => 'Next Up',
-    'popular-movie' => 'Popular Movies',
-    'popular-series' => 'Popular Series',
-    'movie' => 'Movies',
-    'series' => 'Series',
-    'mapped' => 'Mapped items',
-    'search' => 'Search',
-    'downloads' => 'Downloads',
-    _ => 'Home',
-  };
+  static String rowName(String id) => id.startsWith('rating-')
+      ? (id == 'rating-0' ? 'Unrated' : tedRatingNames[int.parse(id.substring(7)) - 1])
+      : switch (id) {
+          'continue-watching' => 'Continue Watching',
+          'new-releases' => 'New Releases',
+          'next-up' => 'Next Up',
+          'watchlist' => 'From your Watch List',
+          'ratings' => 'Ratings',
+          'popular-movie' => 'Popular Movies',
+          'popular-series' => 'Popular Series',
+          'movie' => 'Movies',
+          'series' => 'Series',
+          'mapped' => 'Mapped items',
+          'search' => 'Search',
+          'downloads' => 'Downloads',
+          _ => 'Home',
+        };
 }

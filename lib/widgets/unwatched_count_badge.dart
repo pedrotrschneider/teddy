@@ -43,15 +43,18 @@ class UnwatchedCountBadge extends StatelessWidget {
       // alignment would expand into the Stack's loose width instead).
       child: Center(
         widthFactor: 1,
-        child: Text(
-          total != null
-              ? '$count / $total'
-              : count > 999
-              ? '999+'
-              : '$count',
-          maxLines: 1,
-          softWrap: false,
-          style: TextStyle(color: foregroundColor ?? tokens(context).bg, fontSize: fontSize, fontWeight: .bold),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            total != null
+                ? '$count / $total'
+                : count > 999
+                ? '999+'
+                : '$count',
+            maxLines: 1,
+            softWrap: false,
+            style: TextStyle(color: foregroundColor ?? tokens(context).bg, fontSize: fontSize, fontWeight: .bold),
+          ),
         ),
       ),
     );

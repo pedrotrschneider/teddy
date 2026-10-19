@@ -31,6 +31,8 @@ TedFilmographyEntry credit(
   List<Map<String, dynamic>> jointWatches = const [],
 }) => TedFilmographyEntry.fromJson({
   'item': {'Id': id, 'Type': series ? 'Series' : 'Movie', 'Name': name, 'ProductionYear': 2026},
+  'watchlist': false,
+  'user_rating': null,
   'identity_status': unresolved ? 'missing' : 'ready',
   'roles': ['Lead'],
   'images': [],
@@ -387,11 +389,15 @@ void main() {
     await tester.pumpAndSettle();
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
     await tester.pumpAndSettle();
+    for (var i = 0; i < 4 && FocusManager.instance.primaryFocus?.debugLabel != 'ted_cast_row'; i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pumpAndSettle();
+    }
     expect(FocusManager.instance.primaryFocus?.debugLabel, 'ted_cast_row');
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pumpAndSettle();
     expect(find.byType(TedPersonDetail), findsOneWidget);
-    expect(find.byType(NavigationRailItem), findsNWidgets(8));
+    expect(find.byType(NavigationRailItem), findsNWidgets(10));
     expect(FocusManager.instance.primaryFocus?.debugLabel, contains('-watched'));
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
     await tester.sendKeyDownEvent(LogicalKeyboardKey.arrowLeft);

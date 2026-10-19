@@ -31,8 +31,8 @@ void main() {
     final future = TedClient(auth).home(onUpdate: updates.add);
     await Future<void>.delayed(Duration.zero);
     expect(updates.last.first.titles.single.name, 'Example movie');
-    expect(updates.last[3].loading, true);
     expect(updates.last[4].loading, true);
+    expect(updates.last[5].loading, true);
     shows.complete(
       response({
         'titles': [titleData(kind: 'series')],
@@ -40,19 +40,20 @@ void main() {
       }),
     );
     await Future<void>.delayed(Duration.zero);
-    expect(updates.last[4].titles, hasLength(1));
-    expect(updates.last[3].loading, true);
+    expect(updates.last[5].titles, hasLength(1));
+    expect(updates.last[4].loading, true);
     movies.complete(response({'error': 'catalog_unavailable'}, 502));
     final result = await future;
     expect(result.map((row) => row.id), [
       'continue-watching',
       'new-releases',
       'next-up',
+      'watchlist',
       'popular-movie',
       'popular-series',
     ]);
     expect(result[0].titles, hasLength(1));
-    expect(result[3].unavailable, true);
+    expect(result[4].unavailable, true);
     expect(result.any((row) => row.loading), false);
     auth.close();
   });

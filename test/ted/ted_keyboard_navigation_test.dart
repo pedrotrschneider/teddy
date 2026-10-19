@@ -268,7 +268,7 @@ void main() {
       final client = SidebarFixture();
       await mount(tester, client, tv: tv);
       await press(tester, LogicalKeyboardKey.arrowUp);
-      const labels = ['Search', 'Home', 'Movies', 'Series', 'Downloads'];
+      const labels = ['Search', 'Home', 'Movies', 'Series', 'Watch List', 'Ratings', 'Downloads'];
       NavigationRailItem item(int i) => tester
           .widgetList<NavigationRailItem>(find.byType(NavigationRailItem))
           .firstWhere((v) => (v.label as Text).data == labels[i]);
@@ -784,7 +784,7 @@ void main() {
     await mount(tester, KeyboardFixture(), onSettings: () => settings++, onSignOut: () => logouts++);
     await press(tester, LogicalKeyboardKey.arrowRight);
     await press(tester, LogicalKeyboardKey.arrowLeft);
-    for (var i = 0; i < 4; i++) {
+    for (var i = 0; i < 6; i++) {
       await press(tester, LogicalKeyboardKey.arrowDown);
     }
     expect(focused(find.byTooltip('Reload')), true);
@@ -815,7 +815,7 @@ void main() {
     expect(focused(find.byKey(const ValueKey('continue-watching'))), true);
     await press(tester, LogicalKeyboardKey.escape);
     expect(rail(tester, 0).focusNode.hasPrimaryFocus, true);
-    for (var i = 0; i < 4; i++) {
+    for (var i = 0; i < 6; i++) {
       await press(tester, LogicalKeyboardKey.arrowDown);
     }
     expect(focused(find.byTooltip('Reload')), true, reason: 'Down from Downloads reaches bottom actions');
@@ -845,7 +845,7 @@ void main() {
       onSettings: () => settings++,
       displayName: 'A very long account display name',
     );
-    for (var i = 0; i < 3; i++) {
+    for (var i = 0; i < 5; i++) {
       await press(tester, LogicalKeyboardKey.arrowDown);
     }
     final downloads = find.widgetWithText(NavigationRailItem, 'Downloads');
@@ -923,7 +923,7 @@ void main() {
 
   testWidgets('keyboard activation of Settings enters its controls', (tester) async {
     await mount(tester, KeyboardFixture());
-    for (var i = 0; i < 5; i++) {
+    for (var i = 0; i < 7; i++) {
       await press(tester, LogicalKeyboardKey.arrowDown);
     }
     expect(focused(find.byTooltip('Settings')), true);
@@ -1053,7 +1053,7 @@ void main() {
       reason: 'A removed retry restores usable Home focus: ${FocusManager.instance.primaryFocus}',
     );
     await press(tester, LogicalKeyboardKey.arrowLeft);
-    for (var i = 0; i < 4; i++) {
+    for (var i = 0; i < 6; i++) {
       await press(tester, LogicalKeyboardKey.arrowDown);
     }
     expect(focused(find.byTooltip('Reload')), true);

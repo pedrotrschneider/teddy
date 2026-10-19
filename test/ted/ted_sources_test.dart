@@ -594,6 +594,8 @@ void main() {
                 'series': {'name': 'Fixture'},
                 'episode': {'name': 'Next', 'season': 1, 'number': 2},
               },
+              'watchlist': false,
+              'user_rating': null,
               'watch_state': {'played': false, 'revision': 0, 'position_ms': 0},
               'local_available': false,
               'mapped_ready': false,

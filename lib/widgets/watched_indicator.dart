@@ -1,3 +1,5 @@
+import '../ted/ted_rating_icon.dart';
+import '../ted/ted_rating.dart';
 import '../ted/ted_joint_watch.dart';
 import '../ted/ted_user_watch.dart';
 import '../ted/ted_user_avatar.dart';
@@ -12,6 +14,7 @@ import '../services/settings_service.dart';
 import '../theme/mono_tokens.dart';
 import 'app_icon.dart';
 import 'media_progress_bar.dart';
+import 'settings_builder.dart';
 import 'unwatched_count_badge.dart';
 
 /// Size preset for [WatchedIndicator]: [standard] for grid/poster cards,
@@ -56,13 +59,33 @@ enum WatchedIndicatorSize {
   final double barMinHeight;
 }
 
+/// Device preference applied to every artwork overlay, independent of UI scale.
+class _IndicatorMetrics {
+  final WatchedIndicatorSize preset;
+  final double scale;
+  const _IndicatorMetrics(this.preset, this.scale);
+  double get checkInset => preset.checkInset * scale;
+  double get checkPadding => preset.checkPadding * scale;
+  double get checkIconSize => preset.checkIconSize * scale;
+  double get badgeSize => preset.badgeSize * scale;
+  double get badgeFontSize => preset.badgeFontSize * scale;
+  double get barRadius => preset.barRadius * scale;
+  double get barMinHeight => preset.barMinHeight * scale;
+  double get gap => 4 * scale;
+  double get minimumHeight => (preset == WatchedIndicatorSize.compact ? 20.0 : 22.0).clamp(0, badgeSize + 2);
+}
+
 /// Watched/progress overlay for media artwork: watched checkmark,
 /// unwatched-count pill (shows/seasons), active-progress bar, and season
 /// completion bar. The single implementation behind every surface that
-/// stamps watch state onto a poster/thumbnail. Callers that must react to
-/// [SettingsService.showWatchedIndicators] or [SettingsService.showUnwatchedCount]
-/// flipping wrap themselves in a [SettingsBuilder] on those prefs.
+/// stamps watch state onto a poster/thumbnail. Settings changes rebuild only
+/// this overlay, including when its containing media card is memoized.
 class WatchedIndicator extends StatelessWidget {
+  static final List<Pref<Object?>> _prefs = [
+    SettingsService.posterIndicatorScalePercent,
+    SettingsService.showWatchedIndicators,
+    SettingsService.showUnwatchedCount,
+  ];
   final MediaItem item;
   final WatchedIndicatorSize size;
 
@@ -83,32 +106,59 @@ class WatchedIndicator extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => SettingsBuilder(
+    prefs: _prefs,
+    builder: (context) =>
+        _build(context, SettingsService.instance.read(SettingsService.posterIndicatorScalePercent) / 100),
+  );
+
+  Widget _build(BuildContext context, double scale) {
+    final metrics = _IndicatorMetrics(size, scale);
     final bool showCount = showUnwatchedCount ?? SettingsService.instance.read(SettingsService.showUnwatchedCount);
     final bool showWatched = SettingsService.instance.read(SettingsService.showWatchedIndicators);
     final hasActiveProgress = item.hasActiveProgress;
     final unwatched = item.unwatchedCount;
     final barRadius = BorderRadius.only(
-      bottomLeft: Radius.circular(size.barRadius),
-      bottomRight: Radius.circular(size.barRadius),
+      bottomLeft: Radius.circular(metrics.barRadius),
+      bottomRight: Radius.circular(metrics.barRadius),
     );
 
     return LayoutBuilder(
       builder: (context, constraints) => Stack(
         children: [
+          if (item.backend == MediaBackend.ted && item.raw?['watchlist'] == true)
+            Positioned(
+              top: metrics.checkInset,
+              left: metrics.checkInset,
+              child: Tooltip(
+                message: 'In your Watch List',
+                child: Container(
+                  width: metrics.badgeSize,
+                  height: metrics.badgeSize,
+                  decoration: const BoxDecoration(color: Color(0xFF16834C), shape: BoxShape.circle),
+                  child: Icon(Icons.bookmark_border, color: Colors.white, size: metrics.checkIconSize),
+                ),
+              ),
+            ),
+          if (item.backend == MediaBackend.ted && item.raw?['user_rating'] is int)
+            Positioned(
+              bottom: metrics.checkInset + metrics.barMinHeight,
+              left: metrics.checkInset,
+              child: TedRatingBadge(rating: item.raw!['user_rating'] as int, size: metrics.badgeSize),
+            ),
           // Watched checkmark
           if (showWatched && item.isWatched && !hasActiveProgress)
             Positioned(
-              top: size.checkInset,
-              right: size.checkInset,
+              top: metrics.checkInset,
+              right: metrics.checkInset,
               child: Container(
-                padding: EdgeInsets.all(size.checkPadding),
+                padding: EdgeInsets.all(metrics.checkPadding),
                 decoration: BoxDecoration(
                   color: tokens(context).text,
                   shape: BoxShape.circle,
                   boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.3), blurRadius: 4)],
                 ),
-                child: AppIcon(Symbols.check_rounded, fill: 1, color: tokens(context).bg, size: size.checkIconSize),
+                child: AppIcon(Symbols.check_rounded, fill: 1, color: tokens(context).bg, size: metrics.checkIconSize),
               ),
             ),
           // Unwatched count for shows/seasons
@@ -121,16 +171,16 @@ class WatchedIndicator extends StatelessWidget {
               unwatched != null &&
               unwatched > 0)
             Positioned(
-              top: size.checkInset,
-              right: size.checkInset,
+              top: metrics.checkInset,
+              right: metrics.checkInset,
               child: UnwatchedCountBadge(
                 count: item.backend == MediaBackend.ted ? item.viewedLeafCount ?? 0 : unwatched,
                 total: item.backend == MediaBackend.ted ? item.leafWatchTotal : null,
-                size: size.badgeSize,
-                fontSize: size.badgeFontSize,
+                size: metrics.badgeSize,
+                fontSize: metrics.badgeFontSize,
               ),
             ),
-          if (showWatched && item.backend == MediaBackend.ted) ..._tedBadges(constraints.maxHeight, unwatched),
+          if (showWatched && item.backend == MediaBackend.ted) ..._tedBadges(constraints.maxHeight, unwatched, metrics),
           // Progress bar for partially watched content (episodes/movies)
           if (hasActiveProgress)
             Positioned(
@@ -142,7 +192,7 @@ class WatchedIndicator extends StatelessWidget {
                 child: MediaProgressBar(
                   viewOffset: item.viewOffsetMs!,
                   duration: item.durationMs!,
-                  minHeight: size.barMinHeight,
+                  minHeight: metrics.barMinHeight,
                 ),
               ),
             ),
@@ -158,7 +208,7 @@ class WatchedIndicator extends StatelessWidget {
                   value: item.leafWatchFraction,
                   backgroundColor: tokens(context).outline,
                   valueColor: AlwaysStoppedAnimation<Color>(Theme.of(context).colorScheme.primary),
-                  minHeight: size.barMinHeight,
+                  minHeight: metrics.barMinHeight,
                 ),
               ),
             ),
@@ -167,7 +217,7 @@ class WatchedIndicator extends StatelessWidget {
     );
   }
 
-  List<Widget> _tedBadges(double artworkHeight, int? unwatched) {
+  List<Widget> _tedBadges(double artworkHeight, int? unwatched, _IndicatorMetrics metrics) {
     final joints = [
       for (final raw in (item.raw?['joint_watches'] as List? ?? const []))
         TedJointWatch.fromJson(Map<String, dynamic>.from(raw as Map)),
@@ -177,51 +227,49 @@ class WatchedIndicator extends StatelessWidget {
         TedUserWatch.fromJson(Map<String, dynamic>.from(raw as Map)),
     ].where((watch) => watch.seen).toList();
     final top =
-        size.checkInset +
+        metrics.checkInset +
         ((item.isWatched ||
                 ((item.isPartiallyWatched || showUnviewedCount) &&
                     (item.isShow || item.isSeason) &&
                     (unwatched ?? 0) > 0))
-            ? size.badgeSize + 4
+            ? metrics.badgeSize + metrics.gap
             : 0);
-    final peopleTop = top + joints.length * (size.badgeSize + 4);
     final bottom =
-        size.checkInset + (item.hasActiveProgress || item.isSeason && item.isPartiallyWatched ? size.barMinHeight : 0);
-    final normalHeight = size.badgeSize + 2;
-    final minimumHeight = size == WatchedIndicatorSize.compact ? 20.0 : 22.0;
-    final available = artworkHeight.isFinite ? artworkHeight - peopleTop - bottom : people.length * (normalHeight + 4);
-    final fit = _PeopleBadgeLayout.fit(people.length, available, normalHeight, minimumHeight);
+        metrics.checkInset +
+        (item.hasActiveProgress || item.isSeason && item.isPartiallyWatched ? metrics.barMinHeight : 0);
+    final normalHeight = metrics.badgeSize + 2;
+    final count = joints.length + people.length;
+    final available = artworkHeight.isFinite ? artworkHeight - top - bottom : count * (normalHeight + metrics.gap);
+    final fit = _PeopleBadgeLayout.fit(count, available, normalHeight, metrics.minimumHeight, metrics.gap);
     final diameter = fit.height - 2;
-    final fontSize = size.badgeFontSize * diameter / size.badgeSize;
+    final fittedMetrics = _IndicatorMetrics(size, diameter / size.badgeSize);
+    final visibleJoints = joints.take(fit.visible).toList();
+    final visiblePeople = people.take((fit.visible - visibleJoints.length).clamp(0, people.length));
     return [
-      if (joints.isNotEmpty)
+      if (count > 0)
         Positioned(
-          top: top,
-          left: size.checkInset,
-          right: size.checkInset,
+          top: top + fit.offset,
+          left: metrics.checkInset,
+          right: metrics.checkInset,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.end,
+            spacing: metrics.gap,
             children: [
-              for (final watch in joints) _JointBadge(watch: watch, size: size, episodes: item.isShow || item.isSeason),
-            ],
-          ),
-        ),
-      if (people.isNotEmpty)
-        Positioned(
-          top: peopleTop + fit.offset,
-          left: size.checkInset,
-          right: size.checkInset,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            spacing: 4,
-            children: [
-              for (final watch in people.take(fit.visible))
+              for (final watch in visibleJoints)
+                SizedBox(
+                  height: fit.height,
+                  child: Center(
+                    widthFactor: 1,
+                    child: _JointBadge(watch: watch, metrics: fittedMetrics, episodes: item.isShow || item.isSeason),
+                  ),
+                ),
+              for (final watch in visiblePeople)
                 TedOtherWatchBadge(
                   watch: watch,
                   size: size,
                   episodes: item.isShow || item.isSeason,
                   diameter: diameter,
-                  fontSize: fontSize,
+                  fontSize: fittedMetrics.badgeFontSize,
                 ),
               if (fit.hidden > 0)
                 Tooltip(
@@ -239,7 +287,11 @@ class WatchedIndicator extends StatelessWidget {
                       widthFactor: 1,
                       child: Text(
                         '+${fit.hidden}',
-                        style: TextStyle(color: Colors.white, fontSize: fontSize, fontWeight: FontWeight.w600),
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: fittedMetrics.badgeFontSize,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ),
@@ -256,57 +308,65 @@ class _PeopleBadgeLayout {
   final double height, offset;
   const _PeopleBadgeLayout(this.visible, this.hidden, this.height, [this.offset = 0]);
 
-  factory _PeopleBadgeLayout.fit(int count, double available, double normal, double minimum) {
+  factory _PeopleBadgeLayout.fit(int count, double available, double normal, double minimum, double gap) {
     if (count == 0) return _PeopleBadgeLayout(0, 0, normal);
-    final fitted = (available - 4 * (count - 1)) / count;
+    final fitted = (available - gap * (count - 1)) / count;
     if (fitted >= minimum) return _PeopleBadgeLayout(count, 0, fitted.clamp(minimum, normal));
-    final slots = ((available + 4) / (minimum + 4)).floor().clamp(1, count);
+    final slots = ((available + gap) / (minimum + gap)).floor().clamp(1, count);
     final visible = slots - 1;
-    final height = ((available - 4 * visible) / slots).clamp(minimum, normal);
+    final height = ((available - gap * visible) / slots).clamp(minimum, normal);
     return _PeopleBadgeLayout(visible, count - visible, height, (available - height).clamp(double.negativeInfinity, 0));
   }
 }
 
 class _JointBadge extends StatelessWidget {
   final TedJointWatch watch;
-  final WatchedIndicatorSize size;
+  final _IndicatorMetrics metrics;
   final bool episodes;
-  const _JointBadge({required this.watch, required this.size, required this.episodes});
+  const _JointBadge({required this.watch, required this.metrics, required this.episodes});
   @override
   Widget build(BuildContext context) {
     final remaining = watch.available - watch.watched;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Tooltip(
-        message:
-            '${watch.name}: ${remaining > 0 && episodes
-                ? "${watch.watched} / ${watch.available} episodes watched"
-                : watch.watched > 0
-                ? "Watched"
-                : "In progress"}',
-        child: remaining > 0 && episodes
-            ? UnwatchedCountBadge(
-                count: watch.watched,
-                total: watch.available,
-                size: size.badgeSize,
-                fontSize: size.badgeFontSize,
-                backgroundColor: Color(int.parse(watch.color.substring(1), radix: 16) | 0xFF000000),
-                foregroundColor: Colors.black,
-              )
-            : Container(
-                width: size.badgeSize,
-                height: size.badgeSize,
-                alignment: Alignment.center,
-                decoration: BoxDecoration(
-                  color: Color(int.parse(watch.color.substring(1), radix: 16) | 0xFF000000),
-                  shape: BoxShape.circle,
+    return Tooltip(
+      message:
+          '${watch.name}: ${remaining > 0 && episodes
+              ? "${watch.watched} / ${watch.available} episodes watched"
+              : watch.watched > 0
+              ? "Watched"
+              : "In progress"}',
+      child: Stack(
+        clipBehavior: Clip.none,
+        children: [
+          remaining > 0 && episodes
+              ? UnwatchedCountBadge(
+                  count: watch.watched,
+                  total: watch.available,
+                  size: metrics.badgeSize,
+                  fontSize: metrics.badgeFontSize,
+                  backgroundColor: Color(int.parse(watch.color.substring(1), radix: 16) | 0xFF000000),
+                  foregroundColor: Colors.black,
+                )
+              : Container(
+                  width: metrics.badgeSize,
+                  height: metrics.badgeSize,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: Color(int.parse(watch.color.substring(1), radix: 16) | 0xFF000000),
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    watch.watched > 0 ? Icons.check : Icons.history,
+                    color: Colors.black,
+                    size: metrics.checkIconSize,
+                  ),
                 ),
-                child: Icon(
-                  watch.watched > 0 ? Icons.check : Icons.history,
-                  color: Colors.black,
-                  size: size.checkIconSize,
-                ),
-              ),
+          if (watch.rating != null)
+            Positioned(
+              top: -metrics.badgeSize * tedAccountRatingOutset,
+              right: -metrics.badgeSize * tedAccountRatingOutset,
+              child: TedRatingBadge(rating: watch.rating!, size: metrics.badgeSize * tedAccountRatingScale),
+            ),
+        ],
       ),
     );
   }
@@ -331,6 +391,7 @@ class TedOtherWatchBadge extends StatelessWidget {
     final badgeFontSize = fontSize ?? size.badgeFontSize;
     final partialCount = episodes && watch.available > 0 && watch.watched < watch.available;
     final partialProgress = !episodes && watch.watched == 0 && watch.progress != null;
+    final ratingDetail = watch.rating == null ? '' : ' · ${tedRatingNames[watch.rating! - 1]}';
     final detail = partialCount
         ? '${watch.watched} / ${watch.available} episodes watched'
         : watch.watched > 0
@@ -344,9 +405,9 @@ class TedOtherWatchBadge extends StatelessWidget {
         ? '${watch.progress!.round()}%'
         : null;
     return Semantics(
-      label: '${watch.name}: $detail',
+      label: '${watch.name}: $detail$ratingDetail',
       child: Tooltip(
-        message: '${watch.name}: $detail',
+        message: '${watch.name}: $detail$ratingDetail',
         excludeFromSemantics: true,
         child: Container(
           padding: EdgeInsets.only(right: label == null ? 0 : 6),
@@ -362,8 +423,15 @@ class TedOtherWatchBadge extends StatelessWidget {
                 dimension: badgeDiameter,
                 child: Stack(
                   alignment: Alignment.center,
+                  clipBehavior: Clip.none,
                   children: [
                     TedUserAvatar(watch: watch, diameter: badgeDiameter - 4),
+                    if (watch.rating != null)
+                      Positioned(
+                        top: -badgeDiameter * tedAccountRatingOutset,
+                        right: -badgeDiameter * tedAccountRatingOutset,
+                        child: TedRatingBadge(rating: watch.rating!, size: badgeDiameter * tedAccountRatingScale),
+                      ),
                     if (partialProgress)
                       Positioned.fill(
                         child: CircularProgressIndicator(

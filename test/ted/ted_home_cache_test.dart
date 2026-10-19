@@ -14,7 +14,7 @@ import 'ted_catalog_test.dart' show titleData;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  test('all five shelves survive restart, appear before refresh, and accept successful empty replacements', () async {
+  test('all six shelves survive restart, appear before refresh, and accept successful empty replacements', () async {
     final dir = await Directory.systemTemp.createTemp('ted-home-cache');
     addTearDown(() => dir.delete(recursive: true));
     final file = File('${dir.path}/device.db');
@@ -48,9 +48,9 @@ void main() {
       },
     );
     final cached = await first.future;
-    expect(cached, hasLength(5));
+    expect(cached, hasLength(6));
     expect(cached.every((r) => r.titles.length == 1 && !r.loading), true);
-    while (pending.length < 5) {
+    while (pending.length < 6) {
       await Future<void>.delayed(Duration.zero);
     }
     for (final request in pending.entries) {
@@ -61,8 +61,8 @@ void main() {
       );
     }
     final refreshed = await refresh;
-    expect(refreshed[3].titles, hasLength(1));
-    expect(refreshed[3].unavailable, true);
+    expect(refreshed[4].titles, hasLength(1));
+    expect(refreshed[4].unavailable, true);
     expect(refreshed.where((r) => r.id != 'popular-movie').every((r) => r.titles.isEmpty), true);
     pending.clear();
     final second = Completer<List<TedHomeRow>>();
@@ -72,10 +72,10 @@ void main() {
       },
     );
     final retained = await second.future;
-    expect(retained[3].titles, hasLength(1));
+    expect(retained[4].titles, hasLength(1));
     expect(retained.every((r) => !r.loading), true);
     expect(retained.where((r) => r.id != 'popular-movie').every((r) => r.titles.isEmpty), true);
-    while (pending.length < 5) {
+    while (pending.length < 6) {
       await Future<void>.delayed(Duration.zero);
     }
     for (final request in pending.values) {

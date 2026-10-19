@@ -125,7 +125,6 @@ void main() {
     }
     for (final item in [
       const MediaItem.plex(id: 'plex-show', kind: MediaKind.show, title: 'Plex show', leafCount: 4, viewedLeafCount: 0),
-
     ]) {
       await tester.pumpWidget(
         MaterialApp(

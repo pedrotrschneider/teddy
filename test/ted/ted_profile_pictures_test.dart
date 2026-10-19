@@ -45,7 +45,11 @@ void main() {
         expect(r.headers['Authorization'], startsWith('Bearer ted_a_'));
         expect(r.url.queryParameters, isEmpty);
         calls++;
-        return http.Response.bytes(status == 200 ? (malformed ? Uint8List.fromList([1, 2, 3]) : bytes) : [], status);
+        return http.Response.bytes(
+          status == 200 ? (malformed ? Uint8List.fromList([1, 2, 3]) : bytes) : [],
+          status,
+          headers: {'x-ted-compatibility-version': '0.2'},
+        );
       }),
     );
     addTearDown(auth.close);
@@ -123,7 +127,7 @@ void main() {
     while (pending.length < 2) {
       await Future<void>.delayed(Duration.zero);
     }
-    pending[1].complete(http.Response('', 204));
+    pending[1].complete(http.Response('', 204, headers: {'x-ted-compatibility-version': '0.2'}));
     await latest;
     pending[0].complete(http.Response.bytes(bytes, 200));
     await old;

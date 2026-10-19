@@ -192,6 +192,7 @@ class TedAccountMenu extends StatelessWidget {
       child: NavigationRailItem(
         icon: Icons.person_outline,
         iconWidget: TedProfileAvatar(name: displayName, image: profilePicture, diameter: 32),
+        iconSize: 32,
         label: Text(displayName, maxLines: 1, overflow: TextOverflow.ellipsis),
         isSelected: false,
         mouseCursor: SystemMouseCursors.click,

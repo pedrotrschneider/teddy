@@ -296,6 +296,8 @@ class TedPersonDetailState extends State<TedPersonDetail> {
     leafCount: entry.episodeCount,
     viewedLeafCount: entry.watchedEpisodeCount,
     raw: {
+      'watchlist': entry.watchlist,
+      'user_rating': entry.userRating,
       'user_watches': entry.userWatches.map((w) => w.toJson()).toList(),
       'joint_watches': entry.jointWatches.map((w) => w.toJson()).toList(),
     },

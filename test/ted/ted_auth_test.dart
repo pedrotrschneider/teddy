@@ -40,11 +40,12 @@ class MemoryStore implements TedCredentialStore {
   }
 }
 
-http.Response response(Map<String, dynamic> body, [int status = 200]) => http.Response(jsonEncode(body), status);
+http.Response response(Map<String, dynamic> body, [int status = 200]) =>
+    http.Response(jsonEncode(body), status, headers: {'x-ted-compatibility-version': '0.2'});
 final signInRequired = throwsA(isA<TedFailure>().having((e) => e.code, 'code', 'sign_in_required'));
 
 void main() {
-  test('successful HTTP response from another major cannot create a profile', () async {
+  test('successful HTTP response from another contract cannot create a profile', () async {
     final store = MemoryStore();
     final auth = TedAuth(
       store: store,
@@ -52,7 +53,7 @@ void main() {
         (_) async => http.Response(
           jsonEncode(pair(DateTime.utc(2026, 10, 10))),
           200,
-          headers: {'x-ted-compatibility-major': '2'},
+          headers: {'x-ted-compatibility-version': '2'},
         ),
       ),
     );

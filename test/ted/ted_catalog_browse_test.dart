@@ -439,10 +439,14 @@ void main() {
       store: MemoryStore(),
       client: MockClient((request) async {
         if (request.url.path.endsWith('/auth/login')) {
-          return http.Response(jsonEncode(pair(DateTime.now().toUtc())), 200);
+          return http.Response(
+            jsonEncode(pair(DateTime.now().toUtc())),
+            200,
+            headers: {'x-ted-compatibility-version': '0.2'},
+          );
         }
         requests.add(request.url);
-        return http.Response(jsonEncode(response), 200);
+        return http.Response(jsonEncode(response), 200, headers: {'x-ted-compatibility-version': '0.2'});
       }),
     );
     addTearDown(auth.close);

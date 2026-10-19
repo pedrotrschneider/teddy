@@ -66,6 +66,7 @@ flutter build macos --release --no-pub --target lib/teddy_main.dart \
   --dart-define=ENABLE_UPDATE_CHECK=false --dart-define=ENABLE_SENTRY=false \
   --build-name="$(tr -d '\r\n' < version.txt).0" \
   --dart-define="TEDDY_COMPATIBILITY_MAJOR=$(cut -d. -f1 version.txt)" \
+  --dart-define="TEDDY_COMPATIBILITY_VERSION=$(tr -d '\r\n' < version.txt)" \
   --dart-define="TEDDY_RELEASE_VERSION=$(tr -d '\r\n' < version.txt).0-dev"
 app="$build_workspace/source/build/macos/Build/Products/Release/Teddy.app"
 if [[ ! -d "$app" ]]; then

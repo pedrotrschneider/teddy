@@ -19,18 +19,25 @@ void main() {
         store: MemoryStore(),
         now: () => now,
         client: MockClient((request) async {
-          if (request.url.path.endsWith('/login')) return http.Response(jsonEncode(pair(now)), 200);
+          if (request.url.path.endsWith('/login')) {
+            return http.Response(jsonEncode(pair(now)), 200, headers: {'x-ted-compatibility-version': '0.2'});
+          }
           expect(request.url.path, '/api/client/v1/catalog/$kind');
           expect(request.url.queryParameters['search'], 'The Matrix');
           calls++;
           if (calls == 1) {
-            return http.Response(jsonEncode({'code': 'catalog_unavailable', 'error': 'private upstream URL'}), 502);
+            return http.Response(
+              jsonEncode({'code': 'catalog_unavailable', 'error': 'private upstream URL'}),
+              502,
+              headers: {'x-ted-compatibility-version': '0.2'},
+            );
           }
           return http.Response(
             jsonEncode({
               'titles': [titleData(kind: kind)],
             }),
             200,
+            headers: {'x-ted-compatibility-version': '0.2'},
           );
         }),
       );
@@ -60,8 +67,12 @@ void main() {
         now: () => now,
         client: MockClient(
           (request) async => request.url.path.endsWith('/login')
-              ? http.Response(jsonEncode(pair(now)), 200)
-              : http.Response(jsonEncode({'code': failure.$1, 'error': 'private upstream URL'}), failure.$2),
+              ? http.Response(jsonEncode(pair(now)), 200, headers: {'x-ted-compatibility-version': '0.2'})
+              : http.Response(
+                  jsonEncode({'code': failure.$1, 'error': 'private upstream URL'}),
+                  failure.$2,
+                  headers: {'x-ted-compatibility-version': '0.2'},
+                ),
         ),
       );
       addTearDown(auth.close);
@@ -84,9 +95,15 @@ void main() {
         store: MemoryStore(),
         now: () => now,
         client: MockClient((request) async {
-          if (request.url.path.endsWith('/login')) return http.Response(jsonEncode(pair(now)), 200);
+          if (request.url.path.endsWith('/login')) {
+            return http.Response(jsonEncode(pair(now)), 200, headers: {'x-ted-compatibility-version': '0.2'});
+          }
           if (transport) throw http.ClientException('private upstream URL');
-          return http.Response(jsonEncode({'code': 'private upstream URL', 'error': 'private upstream URL'}), 503);
+          return http.Response(
+            jsonEncode({'code': 'private upstream URL', 'error': 'private upstream URL'}),
+            503,
+            headers: {'x-ted-compatibility-version': '0.2'},
+          );
         }),
       );
       addTearDown(auth.close);

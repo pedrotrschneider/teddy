@@ -3,6 +3,7 @@ import 'dart:async';
 import '../models/teddy_section.dart';
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show RenderAbstractViewport;
 import 'package:flutter/services.dart';
 import '../focus/dpad_navigator.dart';
 import '../focus/key_event_utils.dart';
@@ -159,6 +160,93 @@ class _LicensesPage extends _DetailPage {
   Future<void> reload() async {}
 }
 
+/// Apply an anchor during the scroll viewport's layout, before its first paint.
+/// A post-frame jump would briefly display the newly inserted category first.
+class _RatingsScrollController extends ScrollController {
+  _RatingsViewportAnchor? anchor;
+
+  @override
+  ScrollPosition createScrollPosition(ScrollPhysics physics, ScrollContext context, ScrollPosition? oldPosition) =>
+      _RatingsScrollPosition(this, physics: physics, context: context, oldPosition: oldPosition);
+
+  @override
+  void detach(ScrollPosition position) {
+    if (anchor?.position == position) anchor = null;
+    super.detach(position);
+  }
+}
+
+class _RatingsScrollPosition extends ScrollPositionWithSingleContext {
+  final _RatingsScrollController controller;
+  _RatingsScrollPosition(this.controller, {required super.physics, required super.context, super.oldPosition})
+    : super(initialPixels: controller.initialScrollOffset, keepScrollOffset: controller.keepScrollOffset);
+
+  @override
+  bool applyContentDimensions(double minScrollExtent, double maxScrollExtent) {
+    final accepted = super.applyContentDimensions(minScrollExtent, maxScrollExtent);
+    final anchor = controller.anchor;
+    if (anchor?.position != this) return accepted;
+    controller.anchor = null;
+    final target = anchor!.target(minScrollExtent, maxScrollExtent);
+    if (target == null || (target - pixels).abs() <= .1) return accepted;
+    correctBy(target - pixels);
+    return false;
+  }
+}
+
+/// One refresh's visible shelf anchor. Pixel offsets alone cannot preserve the
+/// view when an empty rating category above it becomes a full poster shelf.
+class _RatingsViewportAnchor {
+  final GlobalKey key;
+  final ScrollPosition position;
+  final RenderBox viewport;
+  final double top;
+  const _RatingsViewportAnchor(this.key, this.position, this.viewport, this.top);
+
+  static _RatingsViewportAnchor? capture(Map<String, GlobalKey> rows, String stop) {
+    final preferred = rows[stop.startsWith('hub:') ? stop.substring(4) : stop];
+    for (final key in {?preferred, ...rows.values}) {
+      final context = key.currentContext;
+      final scroll = context == null ? null : Scrollable.maybeOf(context);
+      final row = context?.findRenderObject();
+      final renderViewport = row == null ? null : RenderAbstractViewport.maybeOf(row);
+      final viewport = renderViewport is RenderBox ? renderViewport as RenderBox : null;
+      if (scroll == null ||
+          row is! RenderBox ||
+          viewport == null ||
+          !row.hasSize ||
+          !viewport.hasSize ||
+          !scroll.position.hasContentDimensions ||
+          scroll.position.isScrollingNotifier.value) {
+        continue;
+      }
+      final top = row.localToGlobal(Offset.zero, ancestor: viewport).dy;
+      final bounds = Offset.zero & viewport.size;
+      if (top < bounds.bottom && top + row.size.height > bounds.top) {
+        return _RatingsViewportAnchor(key, scroll.position, viewport, top);
+      }
+    }
+    return null;
+  }
+
+  double? target(double minimum, double maximum) {
+    final context = key.currentContext;
+    final row = context?.findRenderObject();
+    if (context == null ||
+        row is! RenderBox ||
+        !row.attached ||
+        !row.hasSize ||
+        !viewport.attached ||
+        RenderAbstractViewport.maybeOf(row) != viewport ||
+        !position.hasContentDimensions ||
+        position.isScrollingNotifier.value) {
+      return null;
+    }
+    final delta = row.localToGlobal(Offset.zero, ancestor: viewport).dy - top;
+    return (position.pixels + delta).clamp(minimum, maximum);
+  }
+}
+
 class TedBrowseScreenState extends State<TedBrowseScreen> {
   static final _sections = TeddySection.values.map((value) => value.id).toList();
   static final _icons = TeddySection.values.map((value) => value.icon).toList();
@@ -185,15 +273,19 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
   final _bottomKey = GlobalKey<TedFocusRegionState>();
   final _laneKeys = <String, GlobalKey<TedFocusRegionState>>{};
   final _hubKeys = <String, GlobalKey<HubSectionState>>{};
+  final _ratingRowKeys = <String, GlobalKey>{};
+  final _ratingsScroll = _RatingsScrollController();
   final _stops = <(String, bool Function())>[];
   int _sidebarOrigin = 1;
   String? _sidebarReturnStop;
   FocusNode? _activationOrigin;
   bool _wide = true;
   bool _continueRevealPending = false;
+  final _ratingCursors = <String, String?>{};
+  final _ratingLoading = <String>{};
   String _section = 'home', _query = '', _catalog = 'popular';
   String _watchFilter = 'all', _genre = '';
-  String _searchKind = 'movie';
+  String _searchKind = 'movie', _watchlistKind = 'movie';
   bool _mappedOnly = false;
   int _catalogEpoch = 0;
   final _catalogPreview = ValueNotifier<TedTitle?>(null);
@@ -233,6 +325,7 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
 
   @override
   void dispose() {
+    _ratingsScroll.dispose();
     HardwareKeyboard.instance.removeHandler(_backWithoutFocus);
     _catalogPreview.dispose();
     _search.dispose();
@@ -330,8 +423,21 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
       List<TedHomeRow> rows = [];
       List<TedCatalogIssue> issues = [];
       String? after;
+      Map<String, String?>? ratingCursors;
       int? skip;
       switch (section) {
+        case 'ratings':
+          final buckets = await Future.wait([for (var r = 7; r >= 0; r--) widget.client.collection('ratings/$r')]);
+          rows = [
+            for (var i = 0; i < buckets.length; i++)
+              TedHomeRow('rating-${7 - i}', buckets[i].titles, false, buckets[i].issues),
+          ];
+          ratingCursors = {for (var i = 0; i < buckets.length; i++) 'rating-${7 - i}': buckets[i].nextAfter};
+        case 'watchlist':
+          final page = await widget.client.collection('watchlist', kind: _watchlistKind, after: more ? _after : null);
+          titles = page.titles;
+          after = page.nextAfter;
+          issues = page.issues;
         case 'downloads':
           break;
         case 'home':
@@ -369,6 +475,12 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
       }
       emptyPage = titles.isEmpty;
       if (!mounted || generation != _generation || account != widget.client.auth.userId) return;
+      // A category can gain an entire shelf above the return row. Keep that
+      // row at its current viewport position rather than revealing it anew.
+      final ratingsAnchor = section == 'ratings' && returnStop != null
+          ? _RatingsViewportAnchor.capture(_ratingRowKeys, returnStop)
+          : null;
+      _ratingsScroll.anchor = ratingsAnchor;
       setState(() {
         _titles = more
             ? {
@@ -376,6 +488,11 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
               }.values.toList()
             : titles;
         _rows = rows;
+        if (ratingCursors != null) {
+          _ratingCursors
+            ..clear()
+            ..addAll(ratingCursors);
+        }
         _issues = issues;
         _after = after;
         _skip = skip;
@@ -423,7 +540,7 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
                 _focusControls();
               } else {
                 final stop = _stops.where((s) => s.$1 == returnStop).firstOrNull;
-                if (stop == null || !stop.$2()) _focusMain();
+                if (!_restoreRatingsFocus(returnStop) && (stop == null || !stop.$2())) _focusMain();
               }
             }
           });
@@ -522,8 +639,13 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
     unawaited(_load());
   }
 
-  bool get _catalogView => _section == 'movie' || _section == 'series' || _section == 'search';
-  String get _catalogKind => _section == 'search' ? _searchKind : _section;
+  bool get _catalogView =>
+      _section == 'movie' || _section == 'series' || _section == 'search' || _section == 'watchlist';
+  String get _catalogKind => _section == 'watchlist'
+      ? _watchlistKind
+      : _section == 'search'
+      ? _searchKind
+      : _section;
 
   void _changeCatalogFilters(VoidCallback change) {
     setState(() {
@@ -626,7 +748,7 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
     return 24 + 3 + (InputModeTracker.isKeyboardMode(context) ? FocusTheme.focusBorderWidth : 0);
   }
 
-  Widget _catalogControls() => _section == 'search'
+  Widget _catalogControls() => (_section == 'search' || _section == 'watchlist')
       ? _searchControls()
       : _lane(
           'filters',
@@ -656,9 +778,9 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
             child: SizedBox(
               width: constraints.maxWidth >= 480 ? 180 : constraints.maxWidth,
               child: DropdownButtonFormField<String>(
-                key: const ValueKey('search-type'),
+                key: ValueKey('$_section-type'),
                 focusNode: _searchTypeFocus,
-                initialValue: _searchKind,
+                initialValue: _catalogKind,
                 decoration: const InputDecoration(labelText: 'Type', border: OutlineInputBorder(), isDense: true),
                 isExpanded: true,
                 items: const [
@@ -666,7 +788,15 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
                   DropdownMenuItem(value: 'series', child: Text('Series')),
                 ],
                 onChanged: (kind) {
-                  if (kind != null && kind != _searchKind) _changeCatalogFilters(() => _searchKind = kind);
+                  if (kind != null && kind != _catalogKind) {
+                    _changeCatalogFilters(() {
+                      if (_section == 'watchlist') {
+                        _watchlistKind = kind;
+                      } else {
+                        _searchKind = kind;
+                      }
+                    });
+                  }
                 },
               ),
             ),
@@ -698,6 +828,7 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
               onSubmitted: (_) => _submitSearch(),
             ),
           );
+          if (_section == 'watchlist') return type;
           return constraints.maxWidth >= 480
               ? Row(
                   children: [
@@ -866,7 +997,7 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
         final page = _details.lastOrNull;
         if (page is _MoviePage) {
           page.key.currentState?.requestPlayFocus();
-        } else {
+        } else if (!_restoreRatingsFocus(_movieReturnStop)) {
           _focusMain(fromSidebar: true);
         }
       }
@@ -884,6 +1015,14 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
         unawaited(_refreshTitle(title, returnStop: _movieReturnStop));
       }
     }
+  }
+
+  bool _restoreRatingsFocus(String? stop) {
+    if (_details.isNotEmpty || _section != 'ratings' || stop == null || !stop.startsWith('hub:')) return false;
+    final hub = _hubKeys[stop.substring(4)]?.currentState;
+    if (hub == null) return false;
+    hub.requestFocusFromMemory(reveal: false);
+    return true;
   }
 
   KeyEventResult _handleBack(KeyEvent event) {
@@ -965,7 +1104,7 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
   }
 
   Future<void> _refreshTitle(TedTitle title, {String? returnStop}) async {
-    if (_section == 'home' || _personal(_section)) {
+    if (_section == 'home' || _section == 'ratings' || _section == 'watchlist' || _personal(_section)) {
       await _load(returnStop: returnStop);
       return;
     }
@@ -1202,6 +1341,40 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
     return _busy ? notice : _lane(id, notice);
   }
 
+  Future<void> _moreRatings(String id) async {
+    final after = _ratingCursors[id];
+    if (after == null || _ratingLoading.contains(id) || _section != 'ratings') return;
+    final generation = _generation;
+    setState(() => _ratingLoading.add(id));
+    try {
+      final page = await widget.client.collection('ratings/${id.substring(7)}', after: after);
+      if (!mounted || generation != _generation || _section != 'ratings') return;
+      setState(() {
+        _ratingCursors[id] = page.nextAfter;
+        _rows = [
+          for (final row in _rows)
+            if (row.id == id)
+              TedHomeRow(
+                id,
+                {
+                  for (final t in [...row.titles, ...page.titles]) t.media: t,
+                }.values.toList(),
+                false,
+                page.issues,
+              )
+            else
+              row,
+        ];
+      });
+    } catch (e) {
+      if (mounted && generation == _generation) {
+        setState(() => _error = e is TedFailure ? e.message : 'Cannot load ratings.');
+      }
+    } finally {
+      if (mounted) setState(() => _ratingLoading.remove(id));
+    }
+  }
+
   Widget _homeHub(TedHomeRow row) {
     final id = 'hub:${row.id}';
     final first = _rows.where((candidate) => candidate.titles.isNotEmpty).firstOrNull?.id == row.id;
@@ -1227,7 +1400,9 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
           artworkBuilder: _personal(row.id) ? _personalBuilder : _cachedPoster,
           focusMemory: _focusMemory,
           focusScrollAlignment: .18,
-          autoScroll: !first || !PlatformDetector.isTV(),
+          autoScroll: _section != 'home' || !first || !PlatformDetector.isTV(),
+          onNearEnd: _section == 'ratings' ? () => _moreRatings(row.id) : null,
+          onNavigateRight: _section == 'ratings' ? () => _moreRatings(row.id) : null,
           onFocusedItemChanged: first ? (_) => _revealFirstHomeRow() : null,
           icon: switch (row.id) {
             'continue-watching' => Icons.history,
@@ -1313,6 +1488,7 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
                 ? _tvCatalogContent()
                 : SingleChildScrollView(
                     key: PageStorageKey('ted-browse-$_section'),
+                    controller: _section == 'ratings' ? _ratingsScroll : null,
                     padding: EdgeInsets.only(
                       top: _section == 'home' && _rows.any((row) => row.titles.isNotEmpty)
                           ? 0
@@ -1347,22 +1523,47 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
                           ),
                           const SizedBox(height: 32 * ContentLayoutConstants.rowGapScale),
                         ],
-                        if (_busy && (_section != 'home' || !_rows.any((row) => row.titles.isNotEmpty)))
+                        if (_busy &&
+                            (_section == 'ratings'
+                                ? _rows.isEmpty
+                                : _section != 'home' || !_rows.any((row) => row.titles.isNotEmpty)))
                           const LinearProgressIndicator(),
                         if (_error != null) _notice('error', _error!),
                         for (var i = 0; i < _issues.length; i++) _notice('issue:$i', _issues[i].message),
                         if (_catalogView) _catalogControls(),
-                        if (_section == 'home')
-                          for (final row in _rows) ...[
-                            for (var i = 0; i < row.issues.length; i++)
-                              _notice('row-issue:${row.id}:$i', row.issues[i].message),
-                            if (row.unavailable)
-                              _notice(
-                                'row-unavailable:${row.id}',
-                                '${TedPresentation.rowName(row.id)} is unavailable.',
+                        if (_section == 'home' || _section == 'ratings')
+                          for (final row in _rows)
+                            KeyedSubtree(
+                              key: _section == 'ratings'
+                                  ? _ratingRowKeys.putIfAbsent(row.id, GlobalKey.new)
+                                  : ValueKey('ted-home-group:${row.id}'),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  for (var i = 0; i < row.issues.length; i++)
+                                    _notice('row-issue:${row.id}:$i', row.issues[i].message),
+                                  if (row.unavailable)
+                                    _notice(
+                                      'row-unavailable:${row.id}',
+                                      '${TedPresentation.rowName(row.id)} is unavailable.',
+                                    ),
+                                  if (row.titles.isNotEmpty) _homeHub(row),
+                                  if (_section == 'ratings' && row.titles.isEmpty)
+                                    Padding(
+                                      padding: const EdgeInsets.all(24),
+                                      child: Text('${TedPresentation.rowName(row.id)} — No titles yet.'),
+                                    ),
+                                  if (_section == 'ratings' && _ratingCursors[row.id] != null)
+                                    _lane(
+                                      'rating-more:${row.id}',
+                                      TextButton(
+                                        onPressed: _ratingLoading.contains(row.id) ? null : () => _moreRatings(row.id),
+                                        child: const Text('Load more'),
+                                      ),
+                                    ),
+                                ],
                               ),
-                            if (row.titles.isNotEmpty) _homeHub(row),
-                          ],
+                            ),
                         if (_titles.isNotEmpty)
                           _lane(
                             'grid:$_section',
@@ -1403,7 +1604,12 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
                             ),
                             grid: true,
                           ),
-                        if (!_busy && _section != 'home' && _titles.isEmpty && _error == null && _issues.isEmpty)
+                        if (!_busy &&
+                            _section != 'home' &&
+                            _section != 'ratings' &&
+                            _titles.isEmpty &&
+                            _error == null &&
+                            _issues.isEmpty)
                           Padding(padding: const EdgeInsets.all(24), child: Text('No results.')),
                         if (_after != null || _skip != null)
                           _lane(
@@ -1526,7 +1732,19 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
                           policy: WidgetOrderTraversalPolicy(),
                           child: MouseRegion(
                             onEnter: (_) => setState(() => _sidebarHovered = true),
-                            onExit: (_) => setState(() => _sidebarHovered = false),
+                            onExit: (event) {
+                              // The expanding rail may temporarily move its hit edge
+                              // past the pointer. Keep its hover until the pointer
+                              // leaves the final width, avoiding expand/collapse loops.
+                              final p = event.localPosition;
+                              if (p.dx >= 0 &&
+                                  p.dx < NavigationRailLayout.expandedWidth &&
+                                  p.dy >= 0 &&
+                                  p.dy < constraints.maxHeight) {
+                                return;
+                              }
+                              setState(() => _sidebarHovered = false);
+                            },
                             child: Focus(
                               focusNode: _sidebarFocus,
                               canRequestFocus: false,
@@ -1606,11 +1824,11 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
                                                   child: ClickableCursor(
                                                     child: NavigationRailItem(
                                                       icon: _icons[i],
-                                                      label: Text(TedPresentation.rowName(_sections[i])),
+                                                      label: Text(TeddySection.values[i].label),
                                                       isSelected: selected == i,
                                                       mouseCursor: SystemMouseCursors.click,
                                                       isCollapsed: !sidebarExpanded,
-                                                      collapsedLabel: TedPresentation.rowName(_sections[i]),
+                                                      collapsedLabel: TeddySection.values[i].label,
                                                       collapsedContentWidth: TedSidebarControls.collapsedContentWidth,
                                                       onTap: () => _activateSection(_sections[i]),
                                                       focusNode: _navFocus[i],
@@ -1678,7 +1896,7 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
                     onDestinationSelected: (i) => _activateSection(_sections[i]),
                     destinations: [
                       for (var i = 0; i < _sections.length; i++)
-                        NavigationDestination(icon: Icon(_icons[i]), label: TedPresentation.rowName(_sections[i])),
+                        NavigationDestination(icon: Icon(_icons[i]), label: TeddySection.values[i].label),
                     ],
                   ),
                 ),

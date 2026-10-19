@@ -16,6 +16,7 @@ import 'ted_auth_test.dart' show MemoryStore, pair, response;
 import 'ted_profile_pictures_test.dart' show picture;
 
 Map<String, dynamic> indicator({int watched = 0, int available = 1, double? progress, String version = ''}) => {
+  'rating': null,
   'account_id': 2,
   'name': 'Clara',
   'avatar_version': version,
@@ -36,6 +37,8 @@ void main() {
     }
     final entry = TedFilmographyEntry.fromJson({
       'item': {'Id': '11111111-1111-4111-8111-111111111111', 'Type': 'Movie', 'Name': 'Movie'},
+      'watchlist': false,
+      'user_rating': null,
       'identity_status': 'ready',
       'media': {'kind': 'movie', 'id': 'tt1234567'},
       'watched': false,
@@ -59,7 +62,11 @@ void main() {
         expect(r.url.path, '/api/client/v1/accounts/2/avatar');
         expect(r.headers['Authorization'], startsWith('Bearer ted_a_'));
         calls++;
-        return http.Response.bytes(status == 200 ? bytes : [], status, headers: {'content-type': 'image/png'});
+        return http.Response.bytes(
+          status == 200 ? bytes : [],
+          status,
+          headers: {'x-ted-compatibility-version': '0.2', 'content-type': 'image/png'},
+        );
       }),
     );
     addTearDown(auth.close);
@@ -127,7 +134,9 @@ void main() {
     expect(find.text('C'), findsOneWidget);
     await tester.pumpWidget(avatar(const TedUserWatch(3, 'Lucas', '', true, 1, 1, null)));
     final bytes = await tester.runAsync(picture);
-    pending.complete(http.Response.bytes(bytes!, 200, headers: {'content-type': 'image/png'}));
+    pending.complete(
+      http.Response.bytes(bytes!, 200, headers: {'x-ted-compatibility-version': '0.2', 'content-type': 'image/png'}),
+    );
     await tester.pumpAndSettle();
     expect(find.text('L'), findsOneWidget);
     expect(find.byType(Image), findsNothing);

@@ -1,3 +1,4 @@
+import 'ted_rating.dart';
 import 'ted_models.dart';
 
 /// Other accounts' display-only viewing; never personal resume or completion.
@@ -6,6 +7,7 @@ class TedUserWatch {
   final String name, avatarVersion;
   final bool seen;
   final double? progress;
+  final int? rating;
   const TedUserWatch(
     this.accountId,
     this.name,
@@ -13,8 +15,9 @@ class TedUserWatch {
     this.seen,
     this.watched,
     this.available,
-    this.progress,
-  );
+    this.progress, {
+    this.rating,
+  });
   factory TedUserWatch.fromJson(Map<String, dynamic> json) {
     try {
       final w = json['watch'] as Map;
@@ -26,6 +29,7 @@ class TedUserWatch {
         w['watched'] as int,
         w['available'] as int,
         (w['progress'] as num?)?.toDouble(),
+        rating: tedRating(json, 'rating'),
       );
       if (v.accountId <= 0 ||
           v.name.isEmpty ||
@@ -41,6 +45,7 @@ class TedUserWatch {
     }
   }
   Map<String, dynamic> toJson() => {
+    'rating': rating,
     'account_id': accountId,
     'name': name,
     'avatar_version': avatarVersion,

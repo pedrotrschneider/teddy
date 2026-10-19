@@ -1,3 +1,4 @@
+import 'ted_rating.dart';
 import 'ted_joint_watch.dart';
 import 'ted_user_watch.dart';
 import 'ted_models.dart';
@@ -80,6 +81,8 @@ DateTime? _date(dynamic value) {
 /// Provider summaries remain separate from playable TED catalogue identities.
 /// Unresolved appearances remain visible, with unknown personal classification.
 class TedFilmographyEntry {
+  final bool watchlist;
+  final int? userRating;
   final List<TedUserWatch> userWatches;
   final List<TedJointWatch> jointWatches;
   final String id, type, name, overview, identityStatus;
@@ -94,6 +97,8 @@ class TedFilmographyEntry {
   /// or progress into the active account's own state.
   bool get hasViewing => viewed == true || jointWatches.any((watch) => watch.seen);
   const TedFilmographyEntry({
+    this.watchlist = false,
+    this.userRating,
     this.userWatches = const [],
     this.jointWatches = const [],
     required this.id,
@@ -112,7 +117,10 @@ class TedFilmographyEntry {
   });
   factory TedFilmographyEntry.fromJson(Map<String, dynamic> json) {
     final item = json['item'] as Map<String, dynamic>;
+    final preferences = TedTitlePreferences.fromJson(json);
     final value = TedFilmographyEntry(
+      watchlist: preferences.watchlist,
+      userRating: preferences.rating,
       userWatches: ((json['user_watches'] as List?) ?? [])
           .map((e) => TedUserWatch.fromJson(Map<String, dynamic>.from(e as Map)))
           .toList(),

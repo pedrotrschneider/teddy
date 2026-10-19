@@ -29,7 +29,7 @@ void main() {
       release('0.3.0', draft: true),
     ];
     expect(TeddyUpdates.select(items, '0.1.8', false)?.version.toString(), '0.1.9');
-    expect(TeddyUpdates.select(items, '0.1.8', true)?.version.toString(), '0.2.0-rc10');
+    expect(TeddyUpdates.select(items, '0.1.8', true)?.version.toString(), '0.1.9');
     expect(TeddyUpdates.select([...items, release('0.2.0')], '0.2.0-rc10', true)?.version.toString(), '0.2.0');
     expect(TeddyUpdates.select(items, '0.2.0', true), isNull);
     expect(TeddyUpdates.select(items, '0.1.0-dev', true), isNull);

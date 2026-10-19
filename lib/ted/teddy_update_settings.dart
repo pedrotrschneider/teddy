@@ -81,7 +81,7 @@ class _TeddyUpdateSettingsState extends State<TeddyUpdateSettings> {
           _status = TeddyVersion.parse(teddyReleaseVersion) == null
               ? 'Development build: install an official release to enable updates.'
               : update == null
-              ? 'You’re up to date for this compatibility major.'
+              ? 'You’re up to date for this compatibility version.'
               : 'Version ${update.version} is available.';
         });
       }

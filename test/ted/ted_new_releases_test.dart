@@ -40,24 +40,36 @@ void main() {
     final now = DateTime.utc(2026, 10, 13);
     var omit = false;
     final rows = [
-      for (final id in ['continue-watching', 'new-releases', 'next-up', 'popular-movie', 'popular-series'])
+      for (final id in ['continue-watching', 'new-releases', 'next-up', 'watchlist', 'popular-movie', 'popular-series'])
         {'id': id, 'titles': <Object>[], 'unavailable': false, 'issues': <Object>[]},
     ];
     final auth = TedAuth(
       store: MemoryStore(),
       now: () => now,
       client: MockClient((r) async {
-        if (r.url.path.endsWith('/login')) return http.Response(jsonEncode(pair(now)), 200);
+        if (r.url.path.endsWith('/login')) {
+          return http.Response(jsonEncode(pair(now)), 200, headers: {'x-ted-compatibility-version': '0.2'});
+        }
         if (r.url.path.contains('/catalog/')) {
-          return http.Response(jsonEncode({'titles': [], 'next_skip': null}), 200);
+          return http.Response(
+            jsonEncode({'titles': [], 'next_skip': null}),
+            200,
+            headers: {'x-ted-compatibility-version': '0.2'},
+          );
         }
         expect(r.url.path, startsWith('/api/client/v1/rows/'));
         if (r.url.queryParameters.containsKey('after')) {
           expect(r.url.path, '/api/client/v1/rows/new-releases');
           expect(r.url.queryParameters['after'], 'saved-cursor');
         }
-        if (omit && r.url.path.endsWith('/new-releases')) return http.Response('{}', 200);
-        return http.Response(jsonEncode({'titles': [], 'issues': [], 'next_after': ''}), 200);
+        if (omit && r.url.path.endsWith('/new-releases')) {
+          return http.Response('{}', 200, headers: {'x-ted-compatibility-version': '0.2'});
+        }
+        return http.Response(
+          jsonEncode({'titles': [], 'issues': [], 'next_after': ''}),
+          200,
+          headers: {'x-ted-compatibility-version': '0.2'},
+        );
       }),
     );
     addTearDown(auth.close);

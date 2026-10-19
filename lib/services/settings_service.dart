@@ -716,6 +716,11 @@ class SettingsService extends BaseSharedPreferencesService {
     defaultValue: 100,
     transform: (v) => v.clamp(50, 150),
   );
+  static final posterIndicatorScalePercent = IntPref(
+    'poster_indicator_scale_percent',
+    defaultValue: 200,
+    transform: (v) => v.clamp(75, 300),
+  );
   static const teddyAutoPlayNextEpisode = BoolPref('teddy_auto_play_next_episode');
   static const teddyStartupSection = EnumPref<TeddySection>(
     'teddy_startup_section',
@@ -1420,6 +1425,7 @@ class SettingsService extends BaseSharedPreferencesService {
     teddyMaxSimultaneousDownloads,
     teddyUpdateChannel,
     teddyUiScalePercent,
+    posterIndicatorScalePercent,
     playNextCountdown,
     shuffleStartsFromBeginning,
     gestureBrightnessSwipe,

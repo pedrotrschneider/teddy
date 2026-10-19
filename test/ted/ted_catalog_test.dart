@@ -23,6 +23,8 @@ Map<String, dynamic> titleData({
     'description': 'Description',
     if (kind == 'episode') 'episode': {'name': 'One', 'season': 1, 'number': 1},
   },
+  'watchlist': false,
+  'user_rating': null,
   'watch_state': {'played': played, 'revision': 1, 'position_ms': 7000, 'duration_ms': 100000},
   'mapped_ready': ready,
   'local_available': ready,
@@ -81,7 +83,9 @@ void main() {
       store: MemoryStore(),
       now: () => now,
       client: MockClient((request) async {
-        if (request.url.path.endsWith('/login')) return http.Response(jsonEncode(pair(now)), 200);
+        if (request.url.path.endsWith('/login')) {
+          return http.Response(jsonEncode(pair(now)), 200, headers: {'x-ted-compatibility-version': '0.2'});
+        }
         expect(request.headers['Authorization'], 'Bearer ted_a_${'a' * 43}');
         final query = request.url.queryParameters;
         if (query['search'] != null) {
@@ -93,6 +97,7 @@ void main() {
               'next_skip': null,
             }),
             200,
+            headers: {'x-ted-compatibility-version': '0.2'},
           );
         }
         expect(query['skip'], '50');
@@ -102,6 +107,7 @@ void main() {
             'next_skip': 100,
           }),
           200,
+          headers: {'x-ted-compatibility-version': '0.2'},
         );
       }),
     );
@@ -122,6 +128,8 @@ void main() {
       },
       {
         ...titleData(),
+        'watchlist': false,
+        'user_rating': null,
         'watch_state': {'played': false, 'revision': 1, 'position_ms': -1},
       },
     ]) {

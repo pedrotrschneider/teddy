@@ -159,7 +159,11 @@ class TedAuth {
     if (!now().add(const Duration(seconds: 1)).isBefore(value.tokens.accessExpiresAt)) await refresh();
     final token = _credentials?.tokens.access;
     if (_closed || token == null) throw const TedFailure('sign_in_required');
-    return {'Authorization': 'Bearer $token', 'X-Teddy-Compatibility-Major': teddyCompatibilityMajor};
+    return {
+      'Authorization': 'Bearer $token',
+      'X-Teddy-Compatibility-Version': teddyCompatibilityVersion,
+      'X-Teddy-Compatibility-Major': teddyCompatibilityMajor,
+    };
   }
 
   Future<Map<String, dynamic>> json(
@@ -304,6 +308,7 @@ class TedAuth {
       ..headers.addAll({
         'Accept': 'application/json',
         ...?headers,
+        'X-Teddy-Compatibility-Version': teddyCompatibilityVersion,
         'X-Teddy-Compatibility-Major': teddyCompatibilityMajor,
       });
     if (body != null) {
@@ -348,9 +353,8 @@ class TedAuth {
   }
 
   void _requireSuccess(http.Response response) {
-    // Older servers omitted the header and belong to compatibility major zero.
-    final serverMajor = response.headers['x-ted-compatibility-major'] ?? '0';
-    if (serverMajor != teddyCompatibilityMajor) throw const TedFailure('incompatible_version');
+    final serverContract = response.headers['x-ted-compatibility-version'];
+    if (serverContract != teddyCompatibilityVersion) throw const TedFailure('incompatible_version');
     if (response.statusCode >= 200 && response.statusCode < 300) return;
     if (response.statusCode == 401) throw const TedFailure('sign_in_required');
     if (response.statusCode == 426) throw const TedFailure('incompatible_version');

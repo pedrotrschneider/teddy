@@ -23,6 +23,7 @@ args = [flutter, 'build', 'apk' if platform == 'android' else platform,
         '--build-name', core, '--build-number', number,
         '--dart-define=ENABLE_UPDATE_CHECK=false', '--dart-define=ENABLE_SENTRY=false',
         f'--dart-define=TEDDY_RELEASE_VERSION={version}',
+        f'--dart-define=TEDDY_COMPATIBILITY_VERSION={".".join(core.split(".")[:2]) if core.startswith("0.") else core.split(".")[0]}',
         f'--dart-define=TEDDY_COMPATIBILITY_MAJOR={core.split(".")[0]}']
 if platform == 'linux':
     args += ['--target-platform', f'linux-{arch}']

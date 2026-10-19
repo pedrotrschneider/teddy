@@ -249,6 +249,8 @@ void main() {
       find.text('Start from the beginning'),
       find.text('Download'),
       find.text('Mark watched'),
+      find.text('Add to Watch List'),
+      find.text('Rate'),
       find.descendant(of: provider(), matching: find.text('Stremio')).first,
       find.text('First release'),
     ];
@@ -280,6 +282,10 @@ void main() {
     }
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
     await tester.pumpAndSettle();
+    for (var i = 0; i < 4 && FocusManager.instance.primaryFocus?.debugLabel != 'ted_cast_row'; i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pumpAndSettle();
+    }
     expect(FocusManager.instance.primaryFocus?.debugLabel, 'ted_cast_row');
     expect(scroll.offset, greaterThan(0));
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
@@ -345,6 +351,10 @@ void main() {
     expect(focused(getPlay()), true);
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
     await tester.pumpAndSettle();
+    for (var i = 0; i < 4 && FocusManager.instance.primaryFocus?.debugLabel != 'ted_cast_row'; i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pumpAndSettle();
+    }
     expect(FocusManager.instance.primaryFocus?.debugLabel, 'ted_cast_row');
     final portrait = tester.getRect(find.text('First Actor'));
     expect(portrait.bottom, lessThan(tester.view.physicalSize.height));
@@ -352,6 +362,10 @@ void main() {
     await tester.sendKeyDownEvent(LogicalKeyboardKey.arrowLeft);
     await tester.sendKeyRepeatEvent(LogicalKeyboardKey.arrowLeft);
     await tester.pumpAndSettle();
+    for (var i = 0; i < 4 && FocusManager.instance.primaryFocus?.debugLabel != 'ted_cast_row'; i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pumpAndSettle();
+    }
     expect(FocusManager.instance.primaryFocus?.debugLabel, 'ted_cast_row');
     await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowLeft);
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
@@ -359,6 +373,10 @@ void main() {
     expect(FocusManager.instance.primaryFocus?.debugLabel, isNot('ted_cast_row'));
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
     await tester.pumpAndSettle();
+    for (var i = 0; i < 4 && FocusManager.instance.primaryFocus?.debugLabel != 'ted_cast_row'; i++) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pumpAndSettle();
+    }
     expect(FocusManager.instance.primaryFocus?.debugLabel, 'ted_cast_row');
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
     await tester.pumpAndSettle();
@@ -399,7 +417,7 @@ void main() {
           ..heldSources = Completer<TedSourcePage>();
         await mount(tester, client, tv: tv, size: const Size(1512, 950));
         expect(find.byType(TedMovieDetail), findsOneWidget);
-        expect(find.byType(NavigationRailItem), findsNWidgets(8));
+        expect(find.byType(NavigationRailItem), findsNWidgets(10));
         expect(find.descendant(of: find.byType(TedBrowseHeader), matching: find.byType(Text)), findsNothing);
         expect(tester.widget<TedHomeBanner>(find.byType(TedHomeBanner)).catalogPreview, true);
         expect(client.mappedReads, 1);
@@ -518,6 +536,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.widget<FilledButton>(getPlay()).onPressed, isNull);
     client.failSources = false;
+    await tester.ensureVisible(find.text('Retry').first);
     await tester.tap(find.text('Retry').first);
     await tester.pumpAndSettle();
     expect(find.text('First release'), findsOneWidget);
@@ -540,7 +559,7 @@ void main() {
       await tester.pumpAndSettle();
       tester.state<TedMovieDetailState>(find.byType(TedMovieDetail)).requestFocus();
       await tester.pumpAndSettle();
-      for (var i = 0; i < 4; i++) {
+      for (var i = 0; i < 6; i++) {
         await tester.sendKeyEvent(LogicalKeyboardKey.tab);
         await tester.pumpAndSettle();
       }

@@ -52,6 +52,10 @@ Media/person/Settings pages keep sidebar and fixed top-left Back. Episode Back/E
 
 Appearance → UI scale adjusts the entire interface immediately from 50% to 150% (default 100%) and remembers the choice. Start with 75% or 80% on a TV where controls/cards look too large. Native video retains the full display resolution. Scale is included in portable settings backup/reset. Episode-row focus keeps full thumbnails and captions visible with a small bottom margin at any selected scale.
 
+Appearance → Poster indicator size adjusts watched checks/counts, joint/other-account badges, Watch List bookmarks, ratings and +X together, from 75% to 300%. Default 200% doubles the original size independently of UI scale. Changes apply immediately and are included in portable settings/reset; crowded account columns shrink to a readable minimum before truncating. Direct joint-account badges show that joint's rating. Returning to Ratings preserves the row's position and focus while refreshed titles move into their chosen categories.
+
+Other-account rating overlays are larger and sit slightly outside the avatar corner, keeping the initial visible. Absolute cinema uses shorter, separated palms with their original proportions. Sidebar pictures/initials stay circular through collapse and expansion.
+
 ## Details, cast and sources
 
 Movie details has resume/play, restart, download and watched actions with RD/Stremio source controls. Movie/episode entry and returning from playback focus Play/Resume once usable. Show details has download/watch actions and first-focus season cards (Specials last). Season has download/watch actions and episode thumbnails; title is prominent, episode tuple smaller, then release date. Episode combines the show hero/logo with episode art/description and movie-style play actions. Every media detail has release date. Keyboard focus on action rows reveals the hero; season focus reveals full cards.
@@ -113,7 +117,7 @@ The current automated suites cover these boundaries; this checklist is for owner
 
 ## Automated releases
 
-Main pushes publish GitHub releases; develop pushes publish prereleases. PRs produce workflow artifacts only. Version allocation starts from `version.txt` (0.1); TED and Teddy must share their major version. See [release setup and compatibility](../ted/docs/releases.md) for the platform matrix, required Android signing secrets, limitations, and rerun behavior. Inherited upstream store-release scripts are not the Teddy release path.
+Main pushes publish GitHub releases; develop pushes publish prereleases. PRs produce workflow artifacts only. Version allocation starts from `version.txt` (0.2); TED and Teddy must share their MAJOR.MINOR during the 0.x alpha (major only from 1.0). See [release setup and compatibility](../ted/docs/releases.md) for the platform matrix, required Android signing secrets, limitations, and rerun behavior. Inherited upstream store-release scripts are not the Teddy release path.
 
 ## Updates
 
@@ -122,3 +126,5 @@ Settings → Look for Updates offers Stable (default) and Release Candidate chan
 Desktop installs must be in a writable, dedicated app folder; keep downloads outside it. Windows/Linux packages need the included teddy-release.json. The previous app and installer log are retained beside the app in .teddy-update-*/previous and install.log; close all Teddy processes before manually restoring a previous bundle. This first updater release itself must be installed manually. See [release documentation](../ted/docs/releases.md) for verification and platform limitations.
 
 Application artwork lives in icon.png. On macOS regenerate with `devbox run -- python3 scripts/generate-app-icons.py` (Python stdlib, sips and Devbox FFmpeg). This covers Mac/Windows launcher icons, Windows tiles and transparent taskbar variants, all Android TV banner densities, Android launcher/splash and white notification masks, and the iOS Icon Composer source. This replaces the old Android/MSIX generators that depended on deleted Plezy masters. Flutter bundles the same master; Linux bundles it directly. Provider/player logos and required third-party notices retain their own identities. TV launcher acceptance needs a new APK and installation; existing launchers may keep an earlier banner cached. iOS source artwork is updated, but iOS packaging/runtime remain unverified.
+
+Watch List follows Movies and Series in the sidebar. Its Movies/Series selector works like Search without a search field. Save/remove and rating controls live on whole movie/series details. Ratings includes seven personal shelves and account-only Unrated; joint accounts keep their own independent lists and ratings. Viewing never removes a saved title. Use the matching TED 0.2 preview with this build; older alpha contracts are deliberately rejected.

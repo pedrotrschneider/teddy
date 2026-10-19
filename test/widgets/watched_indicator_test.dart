@@ -9,6 +9,7 @@ import 'package:plezy/widgets/media_progress_bar.dart';
 import 'package:plezy/widgets/unwatched_count_badge.dart';
 import 'package:plezy/widgets/watched_indicator.dart';
 import 'package:plezy/ted/ted_profile_avatar.dart';
+import 'package:plezy/ted/ted_rating_icon.dart';
 
 import '../test_helpers/media_items.dart';
 import '../test_helpers/prefs.dart';
@@ -35,6 +36,7 @@ void main() {
     await pump(tester, WatchedIndicator(item: watchedMovie));
 
     expect(find.byIcon(Symbols.check_rounded), findsOneWidget);
+    expect(tester.getSize(find.byIcon(Symbols.check_rounded)).width, 32);
   });
 
   testWidgets('TED joint badges stack on the right without changing personal completion', (tester) async {
@@ -81,6 +83,7 @@ void main() {
     (height: 113.0, people: 4, visible: 1, hidden: 3, shrink: false),
   ]) {
     testWidgets('peer column fits ${sample.height}px artwork with ${sample.hidden} hidden people', (tester) async {
+      await SettingsService.instance.write(SettingsService.posterIndicatorScalePercent, 100);
       final item = testMediaItem(
         backend: MediaBackend.ted,
         kind: MediaKind.episode,
@@ -97,6 +100,7 @@ void main() {
           'user_watches': [
             for (var i = 0; i < sample.people; i++)
               {
+                'rating': null,
                 'account_id': i + 10,
                 'name': 'Person $i',
                 'watch': {'seen': true, 'watched': 0, 'available': 1, 'progress': 25.0},
@@ -172,7 +176,7 @@ void main() {
         final own = tester.getRect(badges.first), joint = tester.getRect(badges.last);
         expect(own.size, joint.size);
         expect(own.width, greaterThan(size.badgeSize));
-        expect(own.height, size.badgeSize);
+        expect(own.height, size.badgeSize * 2);
         expect(joint.right, own.right);
         expect(joint.top, greaterThanOrEqualTo(own.bottom));
         for (final badge in [badges.first, badges.last]) {
@@ -204,5 +208,131 @@ void main() {
 
     await pump(tester, WatchedIndicator(item: inProgressMovie));
     expect(find.byType(MediaProgressBar), findsOneWidget, reason: 'progress bars are not indicators');
+  });
+
+  testWidgets('all poster badges double by default and react to the indicator preference', (tester) async {
+    final item = testMediaItem(
+      backend: MediaBackend.ted,
+      kind: MediaKind.show,
+      leafCount: 10,
+      viewedLeafCount: 2,
+      raw: {
+        'watchlist': true,
+        'user_rating': 7,
+        'joint_watches': [
+          {
+            'account_id': 7,
+            'name': 'Joint',
+            'color': '#59C6F2',
+            'rating': 6,
+            'watch': {'seen': true, 'watched': 10, 'available': 10, 'progress': null},
+          },
+        ],
+        'user_watches': [
+          {
+            'account_id': 8,
+            'name': 'Person',
+            'rating': 4,
+            'watch': {'seen': true, 'watched': 10, 'available': 10, 'progress': null},
+          },
+        ],
+      },
+    );
+    await pump(tester, WatchedIndicator(item: item));
+    for (final scale in [2.0, .75, 1.0, 1.5, 3.0]) {
+      if (scale != 2) {
+        await SettingsService.instance.write(SettingsService.posterIndicatorScalePercent, (scale * 100).round());
+        await tester.pump();
+      }
+      expect(tester.getSize(find.byTooltip('In your Watch List')).width, 24 * scale);
+      expect(tester.getSize(find.byType(UnwatchedCountBadge)).height, 24 * scale);
+      expect(tester.getSize(find.byTooltip('Joint: Watched')).height, 24 * scale);
+      expect(tester.widget<TedOtherWatchBadge>(find.byType(TedOtherWatchBadge)).diameter, 24 * scale);
+      for (final badge in tester.widgetList<TedRatingBadge>(find.byType(TedRatingBadge))) {
+        expect(badge.size, 24 * scale * (badge.rating == 7 ? 1 : .69));
+      }
+    }
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('every rating glyph stays centered inside full and small badges', (tester) async {
+    for (var rating = 1; rating <= 7; rating++) {
+      for (final size in [9.0, 22.0, 48.0]) {
+        await tester.pumpWidget(
+          MaterialApp(
+            home: Center(
+              child: TedRatingBadge(rating: rating, size: size),
+            ),
+          ),
+        );
+        final badge = tester.getRect(find.byType(TedRatingBadge));
+        final glyph = tester.getRect(
+          find.descendant(of: find.byType(TedRatingIcon), matching: find.byType(SizedBox)).first,
+        );
+        expect((glyph.center - badge.center).distance, lessThan(.01));
+        for (final icon in find.descendant(of: find.byType(TedRatingIcon), matching: find.byType(Icon)).evaluate()) {
+          final rect = tester.getRect(find.byWidget(icon.widget));
+          expect(rect.left, greaterThanOrEqualTo(badge.left));
+          expect(rect.top, greaterThanOrEqualTo(badge.top));
+          expect(rect.right, lessThanOrEqualTo(badge.right));
+          expect(rect.bottom, lessThanOrEqualTo(badge.bottom));
+        }
+        expect(tester.takeException(), isNull);
+      }
+    }
+  });
+
+  testWidgets('large indicators on a short thumbnail shrink and reserve a whole overflow badge', (tester) async {
+    final item = testMediaItem(
+      backend: MediaBackend.ted,
+      kind: MediaKind.episode,
+      viewCount: 1,
+      raw: {
+        'user_watches': [
+          for (var i = 0; i < 8; i++)
+            {
+              'account_id': i + 10,
+              'name': 'Person $i',
+              'rating': 4,
+              'watch': {'seen': true, 'watched': 1, 'available': 1, 'progress': null},
+            },
+        ],
+      },
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: monoTheme(dark: true),
+        home: Center(
+          child: SizedBox(
+            width: 220,
+            height: 130,
+            child: WatchedIndicator(item: item, size: WatchedIndicatorSize.compact),
+          ),
+        ),
+      ),
+    );
+    final bounds = tester.getRect(find.byType(WatchedIndicator));
+    final visible = find.byType(TedOtherWatchBadge).evaluate().length;
+    expect(visible, greaterThan(0));
+    expect(visible, lessThan(8));
+    expect(find.text('+${8 - visible}'), findsOneWidget);
+    var bottom = tester.getRect(find.byIcon(Symbols.check_rounded)).bottom;
+    for (final element in find.byType(TedOtherWatchBadge).evaluate()) {
+      final badge = tester.getRect(find.byWidget(element.widget));
+      expect(badge.top, greaterThan(bottom));
+      expect(badge.bottom, lessThan(bounds.bottom));
+      bottom = badge.bottom;
+    }
+    final overflow = tester.getRect(find.text('+${8 - visible}'));
+    expect(overflow.top, greaterThan(bottom));
+    expect(overflow.bottom, lessThan(bounds.bottom));
+    for (final widget in find.byType(TedRatingBadge).evaluate()) {
+      final badge = tester.getRect(find.byWidget(widget.widget));
+      expect(badge.left, greaterThanOrEqualTo(bounds.left));
+      expect(badge.top, greaterThanOrEqualTo(bounds.top));
+      expect(badge.right, lessThanOrEqualTo(bounds.right));
+      expect(badge.bottom, lessThanOrEqualTo(bounds.bottom));
+    }
+    expect(tester.takeException(), isNull);
   });
 }

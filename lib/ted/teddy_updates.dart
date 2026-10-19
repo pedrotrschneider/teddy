@@ -53,6 +53,7 @@ class TeddyUpdates {
       final version = TeddyVersion.parse(item['tag_name']);
       if (version == null ||
           version.major != installed.major ||
+          (installed.major == 0 && version.minor != installed.minor) ||
           (!candidates && (version.rc != null || item['prerelease'] != false)) ||
           version.compareTo(installed) <= 0 ||
           (best != null && version.compareTo(best.version) <= 0)) {

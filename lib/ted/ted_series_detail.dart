@@ -1,3 +1,4 @@
+import 'ted_title_preferences_buttons.dart';
 import 'dart:async';
 import 'dart:collection';
 import 'dart:typed_data';
@@ -268,6 +269,17 @@ class TedSeriesDetailState extends State<TedSeriesDetail> {
                             ),
                       icon: Icon(_title.played ? Icons.check_circle : Icons.check_circle_outline),
                       label: Text(_title.played ? 'Mark series unwatched' : 'Mark series watched'),
+                    ),
+                  ),
+                  _selectable(
+                    TedTitlePreferencesButtons(
+                      onFocused: () {
+                        _lane = 'actions';
+                        _top();
+                      },
+                      client: widget.client,
+                      title: _title,
+                      onChanged: (state) => setState(() => _title = _title.withPreferences(state)),
                     ),
                   ),
                 ],

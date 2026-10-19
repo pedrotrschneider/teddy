@@ -1123,6 +1123,7 @@ void main() {
                 expect(current['headers'], {
                   'Authorization': 'Bearer ted_a_${'b' * 43}',
                   'X-Teddy-Compatibility-Major': '0',
+                  'X-Teddy-Compatibility-Version': '0.2',
                 });
                 expect(current['startPositionMs'], 40000);
               } else {
@@ -1135,7 +1136,7 @@ void main() {
                     .where((call) => call.method == 'command' && (call.arguments as Map)['args'][0] == 'change-list')
                     .toList();
                 expect(
-                  headers.reversed.take(2).map((call) => (call.arguments as Map)['args'].last),
+                  headers.reversed.take(3).map((call) => (call.arguments as Map)['args'].last),
                   containsAll(['Authorization: Bearer ted_a_${'b' * 43}', 'X-Teddy-Compatibility-Major: 0']),
                 );
                 final starts = calls

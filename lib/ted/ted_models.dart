@@ -12,7 +12,7 @@ class TedFailure implements Exception {
     'mapping_not_ready' => 'This item does not have a ready TED mapping.',
     'rate_limited' => 'Too many sign-in attempts. Try again later.',
     'conflict' => 'TED rejected an out-of-order update. Reload the item.',
-    'incompatible_version' => 'TED and Teddy must use the same major version. Update your app or server.',
+    'incompatible_version' => 'TED and Teddy must use compatible versions. Update your app or server.',
     'invalid_response' => 'TED returned an invalid response.',
     'catalog_unavailable' ||
     'catalog_incomplete' => 'Cinemeta is unavailable. Previously viewed titles and personal progress remain available.',

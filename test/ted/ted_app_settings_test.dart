@@ -114,11 +114,13 @@ void main() {
       expect(settings.read(SettingsService.teddyDownloadChunkMiB), 512);
       expect(settings.read(SettingsService.teddyMaxSimultaneousDownloads), 1);
       expect(settings.read(SettingsService.teddyUiScalePercent), 100);
+      expect(settings.read(SettingsService.posterIndicatorScalePercent), 200);
       await settings.write(SettingsService.teddyStartupSection, TeddySection.downloads);
       await settings.write(SettingsService.teddyAutoPlayNextEpisode, true);
       await settings.write(SettingsService.teddyDownloadChunkMiB, 1024);
       await settings.write(SettingsService.teddyMaxSimultaneousDownloads, 3);
       await settings.write(SettingsService.teddyUiScalePercent, 75);
+      await settings.write(SettingsService.posterIndicatorScalePercent, 150);
       await settings.write(SettingsService.useExoPlayer, true);
       await settings.write(SettingsService.introPattern, 'custom-opening');
       await settings.write(SettingsService.startInFullscreen, true);
@@ -133,6 +135,7 @@ void main() {
       expect(settings.read(SettingsService.teddyDownloadChunkMiB), 512);
       expect(settings.read(SettingsService.teddyMaxSimultaneousDownloads), 1);
       expect(settings.read(SettingsService.teddyUiScalePercent), 100);
+      expect(settings.read(SettingsService.posterIndicatorScalePercent), 200);
       expect(settings.read(SettingsService.useExoPlayer), false);
       expect(settings.prefs.getString('private_fixture_token'), 'preserve');
       await SettingsExportService.applyImportMap(exported, settings.prefs, currentUserUuid: 'teddy');
@@ -142,6 +145,7 @@ void main() {
       expect(settings.read(SettingsService.teddyDownloadChunkMiB), 1024);
       expect(settings.read(SettingsService.teddyMaxSimultaneousDownloads), 3);
       expect(settings.read(SettingsService.teddyUiScalePercent), 75);
+      expect(settings.read(SettingsService.posterIndicatorScalePercent), 150);
       expect(settings.read(SettingsService.useExoPlayer), true);
       expect(settings.read(SettingsService.introPattern), 'custom-opening');
     },

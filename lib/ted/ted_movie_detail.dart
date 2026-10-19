@@ -1,3 +1,4 @@
+import 'ted_title_preferences_buttons.dart';
 import 'ted_preparation.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -453,6 +454,15 @@ class TedMovieDetailState extends State<TedMovieDetail> {
             label: Text(_title.played ? 'Mark unwatched' : 'Mark watched'),
           ),
         ),
+        if (_title.media.kind == 'movie')
+          _selectable(
+            TedTitlePreferencesButtons(
+              onFocused: _revealActions,
+              client: widget.client,
+              title: _title,
+              onChanged: (state) => setState(() => _title = _title.withPreferences(state)),
+            ),
+          ),
       ],
     );
     final selectors = Row(
@@ -542,7 +552,7 @@ class TedMovieDetailState extends State<TedMovieDetail> {
           child: LayoutBuilder(
             builder: (context, box) => box.maxWidth >= 1080
                 ? Row(
-                    crossAxisAlignment: CrossAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Expanded(child: actions),
                       const SizedBox(width: 24),

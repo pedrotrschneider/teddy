@@ -309,6 +309,17 @@ class TeddySettingsScreenState extends State<TeddySettingsScreen> {
                   for (final theme in prefs.ThemeMode.values) DialogOption(value: theme, title: themeModeLabel(theme)),
                 ],
               ),
+              SettingSelectionTile<int>(
+                pref: prefs.SettingsService.posterIndicatorScalePercent,
+                icon: Icons.check_circle_outline,
+                title: 'Poster indicator size',
+                subtitleBuilder: (value) =>
+                    '$value%${value == 200 ? " (default)" : ""} · Watched, accounts, Watch List and ratings',
+                options: [
+                  for (final percent in [75, 100, 125, 150, 175, 200, 250, 300])
+                    DialogOption(value: percent, title: '$percent%${percent == 200 ? " (default)" : ""}'),
+                ],
+              ),
               _switch(
                 prefs.SettingsService.hideSpoilers,
                 'Hide spoilers for unwatched episodes',

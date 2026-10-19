@@ -130,17 +130,17 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('five destinations and Search-only controls retain grid geometry without inheriting personal filters', (
+  testWidgets('seven destinations and Search-only controls retain grid geometry without inheriting personal filters', (
     tester,
   ) async {
     for (final size in const [Size(1440, 900), Size(390, 844), Size(320, 390)]) {
       final client = SearchFixture();
       await mount(tester, client, size: size);
       if (size.width >= 760) {
-        expect(find.byType(NavigationRailItem), findsNWidgets(8));
+        expect(find.byType(NavigationRailItem), findsNWidgets(10));
         await tester.tap(nav('Movies'));
       } else {
-        expect(find.byType(NavigationDestination), findsNWidgets(5));
+        expect(find.byType(NavigationDestination), findsNWidgets(7));
         await tester.tap(find.byType(NavigationDestination).at(2));
       }
       await tester.pumpAndSettle();
