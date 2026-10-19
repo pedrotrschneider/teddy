@@ -52,8 +52,7 @@ class _TeddyUpdateSettingsState extends State<TeddyUpdateSettings> {
 
   Future<void> _discard(TeddyPreparedUpdate prepared) async {
     try {
-      await prepared.cancel();
-      await prepared.stage.delete(recursive: true);
+      await prepared.discard();
     } catch (_) {}
   }
 
@@ -99,6 +98,7 @@ class _TeddyUpdateSettingsState extends State<TeddyUpdateSettings> {
     final shutdown = TedAppShutdownScope.maybeOf(context);
     setState(() {
       _installing = true;
+      _handedOff = false;
       _progress = null;
       _status = 'Preparing update…';
     });
@@ -131,6 +131,7 @@ class _TeddyUpdateSettingsState extends State<TeddyUpdateSettings> {
       await _prepared!.start();
       if (Platform.isAndroid) {
         _handedOff = true;
+        _prepared = null; // Periodic cleanup owns the handed-off APK now.
         if (mounted) setState(() => _status = 'Confirm the update in the Android installer.');
         return;
       }

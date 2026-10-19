@@ -43,6 +43,7 @@ import 'ted/ted_focus_recovery.dart';
 import 'ted/ted_episode_navigation.dart';
 import 'ted/ted_season_source.dart';
 import 'ted/teddy_ui_scale.dart';
+import 'ted/teddy_update_cleanup.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -63,15 +64,17 @@ class _TeddyStartupState extends State<_TeddyStartup> {
   String? _deviceId;
   late final _shutdown = TedAppShutdown(closeStorage: () async => _store?.close());
   late final AppLifecycleListener _lifecycle;
+  final _updateCleanup = TeddyUpdateCleanup();
   Future<void>? _startup;
   @override
   void initState() {
     super.initState();
-    _lifecycle = AppLifecycleListener(onExitRequested: _requestExit);
+    _lifecycle = AppLifecycleListener(onExitRequested: _requestExit, onResume: _updateCleanup.check);
     unawaited(_startup = _start());
   }
 
   Future<AppExitResponse> _requestExit() async {
+    _updateCleanup.stop();
     if (mounted) {
       setState(() {
         _exiting = true;
@@ -79,12 +82,14 @@ class _TeddyStartupState extends State<_TeddyStartup> {
       });
     }
     final result = await _shutdown.requestExit(startup: _startup);
+    if (result == AppExitResponse.cancel) _updateCleanup.start();
     if (mounted && result == AppExitResponse.cancel) setState(() => _exitFailed = true);
     return result;
   }
 
   @override
   void dispose() {
+    _updateCleanup.stop();
     _lifecycle.dispose();
     super.dispose();
   }
@@ -96,6 +101,7 @@ class _TeddyStartupState extends State<_TeddyStartup> {
       await initializeTeddyPlatform(settings).timeout(const Duration(seconds: 20));
       final support = await getApplicationSupportDirectory();
       await TeddyLogs.initialize(support);
+      if (mounted && !_exiting) _updateCleanup.start();
       appLogger.i(
         'TV mode: ${PlatformDetector.isTV()}; detection: ${TvDetectionService.tvDetectionReasonsSync().join(",")}',
       );

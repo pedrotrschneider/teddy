@@ -7,7 +7,7 @@ import 'package:archive/archive_io.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
+import 'teddy_update_cleanup.dart';
 import 'teddy_updates.dart';
 
 class TeddyUpdateFailure implements Exception {
@@ -42,14 +42,28 @@ class TeddyPreparedUpdate {
   final Directory stage;
   final String? target, payload;
   final File? apk;
-  const TeddyPreparedUpdate(this.stage, {this.target, this.payload, this.apk});
+  final TeddyUpdateStage? ownership;
+  const TeddyPreparedUpdate(this.stage, {this.target, this.payload, this.apk, this.ownership});
   Future<void> cancel() => File(p.join(stage.path, 'cancel')).writeAsString('cancel');
+  Future<void> discard() async {
+    try {
+      await cancel();
+    } finally {
+      await ownership?.close();
+    }
+    await stage.delete(recursive: true);
+  }
+
   Future<void> start() async {
     if (apk != null) {
+      // A fresh timestamp gives the system installer a full grace period,
+      // including when the permission prompt delayed the handoff.
+      await apk!.setLastModified(DateTime.now());
       final opened = await const MethodChannel('teddy/updates').invokeMethod<bool>('install', {'path': apk!.path});
       if (opened != true) {
         throw const TeddyUpdateFailure('Allow Teddy to install updates in Android settings, then press Update again.');
       }
+      await ownership?.close();
       return;
     }
     final script = File(p.join(stage.path, Platform.isWindows ? 'install.ps1' : 'install.sh'));
@@ -136,31 +150,22 @@ class TeddyUpdateInstaller {
     if (asset == null || checksum == null) {
       throw const TeddyUpdateFailure('This release is missing its platform package or checksum.');
     }
-    String? target;
-    Directory parent;
-    if (Platform.isAndroid) {
-      parent = Directory(p.join((await getTemporaryDirectory()).path, 'teddy-updates'));
-      await parent.create(recursive: true);
-    } else {
-      final executable = await File(Platform.resolvedExecutable).resolveSymbolicLinks();
-      target = Platform.isMacOS ? p.dirname(p.dirname(p.dirname(executable))) : p.dirname(executable);
-      final valid = Platform.isMacOS
-          ? p.basename(target).endsWith('.app') && p.basename(executable) == 'Teddy'
-          : await File(p.join(target, Platform.isWindows ? 'Teddy.exe' : 'Teddy')).exists();
-      if (!valid || p.dirname(target) == target) {
-        throw const TeddyUpdateFailure('Install an official Teddy release before using in-app updates.');
-      }
-      if (!Platform.isMacOS) await validateTeddyBundle(target);
-      parent = Directory(p.dirname(target));
+    final location = await teddyUpdateLocation();
+    if (location == null) {
+      throw const TeddyUpdateFailure('Install an official Teddy release before using in-app updates.');
     }
-    Directory stage;
+    final target = location.target;
+    if (target != null && !Platform.isMacOS) await validateTeddyBundle(target);
+    late final TeddyUpdateStage ownership;
     try {
-      stage = await parent.createTemp('.teddy-update-');
+      if (Platform.isAndroid) await location.parent.create(recursive: true);
+      ownership = await TeddyUpdateStage.create(location.parent, name);
     } catch (_) {
       throw const TeddyUpdateFailure(
         'Teddy’s installation folder is not writable. Move it to a folder you own before updating.',
       );
     }
+    final stage = ownership.directory;
     try {
       progress('Verifying release information…', null);
       final response = await _get(checksum);
@@ -195,7 +200,7 @@ class TeddyUpdateInstaller {
       final actual = (await sha256.bind(archive.openRead()).first).toString();
       if (actual != expected) throw const TeddyUpdateFailure('Update checksum mismatch. Nothing was installed.');
       _check();
-      if (Platform.isAndroid) return TeddyPreparedUpdate(stage, apk: archive);
+      if (Platform.isAndroid) return TeddyPreparedUpdate(stage, apk: archive, ownership: ownership);
       progress('Preparing installation…', null);
       final output = p.join(stage.path, 'new');
       await Isolate.run(() => extractTeddyUpdate(archive.path, output, Platform.operatingSystem));
@@ -216,8 +221,9 @@ class TeddyUpdateInstaller {
           throw const TeddyUpdateFailure('The downloaded application failed signature validation.');
         }
       }
-      return TeddyPreparedUpdate(stage, target: target, payload: payload);
+      return TeddyPreparedUpdate(stage, target: target, payload: payload, ownership: ownership);
     } catch (_) {
+      await ownership.close();
       await stage.delete(recursive: true);
       rethrow;
     } finally {
