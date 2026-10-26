@@ -239,20 +239,26 @@ class TedDownloads extends ChangeNotifier {
   Future<TedEpisodeTargets> offlineTargets(TedMediaIdentity media) async {
     if (media.kind != 'episode') return const TedEpisodeTargets();
     final tuple = media.id.split(':');
-    final currentSeason = int.parse(tuple[1]), currentEpisode = int.parse(tuple[2]);
+    final files = await list();
+    final current = files
+        .where((row) => TedMediaIdentity.fromJson(Map<String, dynamic>.from(row['media'] as Map)) == media)
+        .firstOrNull;
+    final currentItem = current == null ? null : metadata(current);
+    final currentSeason = currentItem?.parentIndex ?? int.parse(tuple[1]),
+        currentEpisode = currentItem?.index ?? int.parse(tuple[2]);
     final titles = <TedTitle>[];
-    for (final file in await list()) {
+    for (final file in files) {
       final identity = TedMediaIdentity.fromJson(Map<String, dynamic>.from(file['media'] as Map));
       if (file['status'] != 'complete' || identity.kind != 'episode') continue;
       final parts = identity.id.split(':');
-      final season = int.parse(parts[1]), episode = int.parse(parts[2]);
+      final item = metadata(file);
+      final season = item.parentIndex ?? int.parse(parts[1]), episode = item.index ?? int.parse(parts[2]);
       if (parts.first != tuple.first || (season == 0) != (currentSeason == 0)) continue;
       final path = p.join(directory(file['id'] as String).path, 'media.bin');
       if (await FileSystemEntity.type(path, followLinks: false) != FileSystemEntityType.file ||
           await File(path).length() != file['bytes']) {
         continue;
       }
-      final item = metadata(file);
       titles.add(
         TedTitle(
           identity,
@@ -319,7 +325,7 @@ class TedDownloads extends ChangeNotifier {
           ? TedDownloadWatch(
               media,
               false,
-              position > 0 && (duration <= 0 || position * 10 < duration * 9),
+              position > 0 && (duration <= 0 || position * 100 < duration * 95),
               position,
               duration > 0 ? duration : null,
               null,
@@ -698,8 +704,8 @@ class TedDownloads extends ChangeNotifier {
           seriesName: item?.grandparentTitle ?? '',
           episodeName: media.kind == 'episode' ? item?.title ?? '' : '',
           parent: media.kind == 'episode' ? TedMediaIdentity('series', media.id.split(':').first) : null,
-          season: media.kind == 'episode' ? int.parse(media.id.split(':')[1]) : null,
-          episode: media.kind == 'episode' ? int.parse(media.id.split(':')[2]) : null,
+          season: media.kind == 'episode' ? item?.parentIndex ?? int.parse(media.id.split(':')[1]) : null,
+          episode: media.kind == 'episode' ? item?.index ?? int.parse(media.id.split(':')[2]) : null,
         ),
       );
     }
@@ -1605,7 +1611,12 @@ class TedDownloads extends ChangeNotifier {
             valid,
           );
           final parts = media.id.split(':');
-          await _cacheArtwork(value, 'season', () => client.season(parts.first, int.parse(parts[1])), valid);
+          await _cacheArtwork(
+            value,
+            'season',
+            () => client.season(parts.first, metadata(value).parentIndex ?? int.parse(parts[1])),
+            valid,
+          );
           if (!valid()) return;
           if (thumbnail) (value['missing_assets'] as List).remove('thumbnail.image');
           await store.saveDownload(value['scope'] as String, value);
@@ -1625,7 +1636,7 @@ class TedDownloads extends ChangeNotifier {
     final last = await store.lastPosition(scope!, media);
     var position = (last?['position_ms'] ?? v['resume_ms']) as int;
     final duration = (last?['duration_ms'] ?? v['duration_ms']) as int;
-    if (last?['kind'] == 'complete' || (duration > 0 && position * 10 >= duration * 9)) position = 0;
+    if (last?['kind'] == 'complete' || (duration > 0 && position * 100 >= duration * 95)) position = 0;
     final file = File(p.join(directory(v['id'] as String).path, 'media.bin'));
     if (!await file.exists() || await file.length() != v['bytes']) throw const TedFailure('download_changed');
     return TedPlaybackSession(

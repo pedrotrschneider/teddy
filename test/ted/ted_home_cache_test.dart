@@ -14,6 +14,64 @@ import 'ted_catalog_test.dart' show titleData;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test(
+    'cached overlaps stay in New Releases during independent refresh and failures without erasing snapshots',
+    () async {
+      final db = AppDatabase.forTesting(NativeDatabase.memory());
+      addTearDown(db.close);
+      final cache = TedHomeCache(db);
+      final pending = <String, Completer<http.Response>>{};
+      final auth = TedAuth(
+        store: MemoryStore(),
+        client: MockClient((request) async {
+          if (request.url.path.endsWith('/login')) return response(pair(DateTime.now()));
+          return pending.putIfAbsent(request.url.path, () => Completer<http.Response>()).future;
+        }),
+      );
+      addTearDown(auth.close);
+      await auth.login('https://ted.example', 'fixture', '', 'Home');
+      final scope = tedOfflineScope(auth)!;
+      final episode = titleData(kind: 'episode', id: 'tt1234567:1:1');
+      for (final id in ['next-up', 'new-releases']) {
+        await cache.write(scope, {
+          'id': id,
+          'titles': [episode],
+          'issues': [],
+          'unavailable': false,
+        });
+      }
+      final updates = <List<TedHomeRow>>[];
+      final request = TedClient(auth, homeCache: cache).home(onUpdate: updates.add);
+      while (pending.length < 6) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(updates.first.singleWhere((row) => row.id == 'new-releases').titles, hasLength(1));
+      expect(updates.first.singleWhere((row) => row.id == 'next-up').titles, isEmpty);
+      pending['/api/client/v1/rows/new-releases']!.complete(response({'error': 'unavailable'}, 503));
+      for (final entry in pending.entries.where((entry) => !entry.key.endsWith('/new-releases'))) {
+        entry.value.complete(
+          response({
+            'titles': entry.key.endsWith('/next-up') ? [episode] : [],
+            'issues': [],
+          }),
+        );
+      }
+      final result = await request;
+      for (final rows in [...updates, result]) {
+        expect(rows.singleWhere((row) => row.id == 'next-up').titles, isEmpty);
+        expect(rows.singleWhere((row) => row.id == 'new-releases').titles, hasLength(1));
+      }
+      // Failed/partial shelves keep their independent persisted data. An empty
+      // successful New Releases response may reveal the retained Next Up item.
+      expect((await cache.read(scope, 'next-up'))!.titles, hasLength(1));
+      final visible = tedDistinctHomeRows([
+        (await cache.read(scope, 'next-up'))!,
+        const TedHomeRow('new-releases', [], false, []),
+      ]);
+      expect(visible.first.titles, hasLength(1));
+    },
+  );
+
   test('all six shelves survive restart, appear before refresh, and accept successful empty replacements', () async {
     final dir = await Directory.systemTemp.createTemp('ted-home-cache');
     addTearDown(() => dir.delete(recursive: true));

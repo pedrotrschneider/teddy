@@ -87,10 +87,17 @@ class PersonalEpisodeFixture extends BrowseFixture {
 }
 
 class NewReleasesFixture extends PersonalEpisodeFixture {
+  final bool duplicate;
+  NewReleasesFixture({this.duplicate = false});
   @override
   Future<List<TedHomeRow>> home({void Function(List<TedHomeRow>)? onUpdate}) async => [
     for (final row in await super.home())
-      row.id == 'new-releases' ? TedHomeRow('new-releases', [upcoming], false, const []) : row,
+      if (row.id == 'new-releases')
+        TedHomeRow('new-releases', [upcoming], false, const [])
+      else if (row.id == 'next-up' && !duplicate)
+        TedHomeRow('next-up', [thumbnailTitle(3)], false, const [])
+      else
+        row,
   ];
 }
 
@@ -438,6 +445,15 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
     await tester.pumpAndSettle();
     expect(tester.state<HubSectionState>(find.descendant(of: next, matching: find.byType(HubSection))).hasFocus, true);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('overlapping retained episode appears only on the New Releases shelf', (tester) async {
+    await mount(tester, NewReleasesFixture(duplicate: true));
+    final releases = find.byKey(const ValueKey('new-releases'));
+    expect(releases, findsOneWidget);
+    expect(find.byKey(const ValueKey('next-up')), findsNothing);
+    expect(find.descendant(of: releases, matching: find.byType(TedPersonalThumbnail)), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

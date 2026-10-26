@@ -648,8 +648,13 @@ class TedMovieDetailState extends State<TedMovieDetail> {
           TedCastRow(
             key: _cast,
             client: widget.client,
-            people: (_title.media.kind == 'episode' ? _show?.enrichment : _castMetadata)?.people ?? const [],
-            loading: _loading || (_title.media.kind == 'episode' ? _show?.enrichment : _castMetadata)?.pending == true,
+            people:
+                (_title.media.kind == 'episode' && _castMetadata?.scopedCast != true
+                        ? _show?.enrichment
+                        : _castMetadata)
+                    ?.people ??
+                const [],
+            loading: _loading || _castMetadata?.pending == true,
             horizontalInset: widget.horizontalInset,
             onUp: _focusActions,
             onLeft: widget.onSidebar,

@@ -65,7 +65,7 @@ void main() {
         return http.Response.bytes(
           status == 200 ? bytes : [],
           status,
-          headers: {'x-ted-compatibility-version': '0.2', 'content-type': 'image/png'},
+          headers: {'x-ted-compatibility-version': '0.3', 'content-type': 'image/png'},
         );
       }),
     );
@@ -135,7 +135,7 @@ void main() {
     await tester.pumpWidget(avatar(const TedUserWatch(3, 'Lucas', '', true, 1, 1, null)));
     final bytes = await tester.runAsync(picture);
     pending.complete(
-      http.Response.bytes(bytes!, 200, headers: {'x-ted-compatibility-version': '0.2', 'content-type': 'image/png'}),
+      http.Response.bytes(bytes!, 200, headers: {'x-ted-compatibility-version': '0.3', 'content-type': 'image/png'}),
     );
     await tester.pumpAndSettle();
     expect(find.text('L'), findsOneWidget);

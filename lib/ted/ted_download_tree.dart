@@ -18,6 +18,7 @@ class TedDownloadNode {
   bool currentlyWatched = false;
   int downloaded = 0, completed = 0, positionMs = 0;
   int? durationMs;
+  int? seasonNumber, episodeNumber;
   MediaItem get indicatorItem => MediaItem.ted(
     id: id,
     kind: kind == 'show'
@@ -110,6 +111,9 @@ List<TedDownloadNode> tedDownloadTree(
       continue;
     }
     final parts = media.id.split(':');
+    final seasonNumber = metadata?['parentIndex'] as int? ?? int.parse(parts[1]);
+    leaf.seasonNumber = seasonNumber;
+    leaf.episodeNumber = metadata?['index'] as int? ?? int.parse(parts[2]);
     final show = roots.putIfAbsent(
       parts[0],
       () => TedDownloadNode(
@@ -120,10 +124,10 @@ List<TedDownloadNode> tedDownloadTree(
       ),
     );
     show.artwork ??= art('show');
-    final seasonId = '${parts[0]}:${parts[1]}';
+    final seasonId = '${parts[0]}:$seasonNumber';
     var season = show.children.where((v) => v.id == seasonId).firstOrNull;
     if (season == null) {
-      season = TedDownloadNode(seasonId, 'season', parts[1] == '0' ? 'Specials' : 'Season ${parts[1]}', 1);
+      season = TedDownloadNode(seasonId, 'season', seasonNumber == 0 ? 'Specials' : 'Season $seasonNumber', 1);
       show.children.add(season);
     }
     season.artwork ??= art('season');
@@ -140,7 +144,7 @@ List<TedDownloadNode> tedDownloadTree(
     for (final season in show.children) {
       season.watched = season.downloaded > 0 && season.completed == season.downloaded;
       season.artwork ??= show.artwork;
-      season.children.sort((a, b) => int.parse(a.id.split(':')[2]).compareTo(int.parse(b.id.split(':')[2])));
+      season.children.sort((a, b) => a.episodeNumber!.compareTo(b.episodeNumber!));
     }
     show.watched = show.downloaded > 0 && show.completed == show.downloaded;
   }

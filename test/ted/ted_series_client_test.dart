@@ -10,6 +10,21 @@ import 'ted_catalog_test.dart' show titleData;
 import 'ted_metadata_client_test.dart' show metadataData;
 
 void main() {
+  test('season watch state uses provider organization while retaining source identity', () {
+    final data = <String, dynamic>{
+      'version': 'a' * 64,
+      'items': [
+        {
+          'media': {'kind': 'episode', 'id': 'tt1234567:21:1'},
+          'season': 20,
+          'revision': 3,
+          'played': true,
+        },
+      ],
+    };
+    expect(TedSeriesWatch.fromJson(data, 'tt1234567', season: 20).watched, 1);
+    expect(() => TedSeriesWatch.fromJson(data, 'tt1234567', season: 21), throwsA(isA<TedFailure>()));
+  });
   test('season watch reviews and edits only the requested season, rejecting mismatched responses', () async {
     var wrongSeason = false;
     final auth = TedAuth(
@@ -24,6 +39,7 @@ void main() {
           'items': [
             {
               'media': {'kind': 'episode', 'id': 'tt1234567:${wrongSeason ? 1 : 2}:1'},
+			  'season':wrongSeason?1:2,
               'revision': 4,
               'played': true,
             },

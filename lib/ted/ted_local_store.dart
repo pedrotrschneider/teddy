@@ -223,7 +223,7 @@ class TedLocalStore {
           final qualified =
               existing?.read<int>('qualified') == 1 ||
               event['kind'] == 'complete' ||
-              duration > 0 && (event['position_ms'] as int) * 100 >= duration * 15 ||
+              duration > 0 && (event['position_ms'] as int) * 100 >= duration * 5 ||
               duration == 0 && event['natural_eof'] == true;
           await db.customStatement('UPDATE ted_sessions SET last_event=?,closed=?,qualified=? WHERE id=?', [
             encoded,

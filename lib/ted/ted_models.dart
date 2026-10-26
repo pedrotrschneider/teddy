@@ -7,6 +7,15 @@ class TedFailure implements Exception {
   String get message => switch (code) {
     'sign_in_required' => 'Sign in to TED again.',
     'invalid_credentials' => 'TED rejected the username or password.',
+    'metadata_identity_unverified' =>
+      'The provider’s episode identities could not be verified. Existing history and mappings are preserved.',
+    'metadata_still_preparing' => 'Metadata is still being prepared. Reload this series shortly.',
+    'metadata_overrides_review_required' =>
+      'Manual overrides changed. Reopen the provider confirmation and choose whether to keep or remove them.',
+    'metadata_provider_changed' => 'The metadata provider changed. Reload the series before trying again.',
+    'metadata_identity_ambiguous' =>
+      'The provider’s episode identities could not be verified. Existing history and mappings are preserved.',
+    'metadata_refresh_failed' => 'Metadata could not be refreshed. Check the server’s metadata providers and retry.',
     'storage_unavailable' => 'Secure storage is unavailable. Retry access to the system keyring.',
     'release_changed' => 'The mapped file changed. Select the item again.',
     'mapping_not_ready' => 'This item does not have a ready TED mapping.',

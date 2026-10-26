@@ -109,8 +109,10 @@ class TedPersonDetailState extends State<TedPersonDetail> {
         final entries = <String, TedFilmographyEntry>{};
         final cursors = <String>{};
         String? after;
+        var pending = false;
         do {
           final page = await widget.client.filmography(widget.person.id, after: after);
+          pending = pending || page.pending;
           if (!_current(generation)) return;
           for (final entry in page.items) {
             if (entries.containsKey(entry.id)) throw const FormatException('Repeated filmography entry');
@@ -130,7 +132,11 @@ class TedPersonDetailState extends State<TedPersonDetail> {
         setState(() => _entries = sorted);
         if (wasFirst != _watched.isEmpty && _lastLane == 'other') _revealOtherAfterInsertion();
         _focusReady();
-        if (!person.pending && !sorted.any((v) => v.identityStatus == 'new' || v.identityStatus == 'queued')) break;
+        if (!person.pending &&
+            !pending &&
+            !sorted.any((v) => v.identityStatus == 'new' || v.identityStatus == 'queued')) {
+          break;
+        }
         if (attempt == 29) {
           setState(() => _error = 'Some person details are still being prepared. Retry to check again.');
           break;

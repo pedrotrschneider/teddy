@@ -68,7 +68,7 @@ void main() {
     PlatformDetector.debugSetIsDesktopOSOverride(true);
   });
   tearDown(() => PlatformDetector.debugSetIsDesktopOSOverride(null));
-  test('0.2 requires personal fields and sends independent scoped mutations', () async {
+  test('0.3 requires personal fields and sends independent scoped mutations', () async {
     final raw = titleData();
     for (final key in ['watchlist', 'user_rating']) {
       final missing = {...raw}..remove(key);
@@ -81,7 +81,7 @@ void main() {
       store: MemoryStore(),
       now: () => now,
       client: MockClient((r) async {
-        expect(r.headers['X-Teddy-Compatibility-Version'], '0.2');
+        expect(r.headers['X-Teddy-Compatibility-Version'], '0.3');
         if (r.url.path.endsWith('/login')) return response(pair(now));
         expect(r.url.path, '/api/client/v1/titles/movie/tt1234567/preferences/rating');
         bodies.add(jsonDecode(r.body));

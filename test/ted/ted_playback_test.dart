@@ -1123,7 +1123,7 @@ void main() {
                 expect(current['headers'], {
                   'Authorization': 'Bearer ted_a_${'b' * 43}',
                   'X-Teddy-Compatibility-Major': '0',
-                  'X-Teddy-Compatibility-Version': '0.2',
+            'X-Teddy-Compatibility-Version': '0.3',
                 });
                 expect(current['startPositionMs'], 40000);
               } else {

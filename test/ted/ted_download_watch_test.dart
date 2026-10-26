@@ -50,6 +50,31 @@ class EpisodeArtClient extends TedClient {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('offline completion waits for 95 percent and explicit Next still wins below five percent', () {
+    const media = TedMediaIdentity('episode', 'tt1234567:1:1');
+    const state = TedDownloadWatch(media, false, false, 0, 100000, null, null);
+    final at = DateTime.utc(2026, 10, 25);
+    Map<String, dynamic> event(int position, String kind) => {
+      'observed_at': at.toIso8601String(),
+      'position_ms': position,
+      'duration_ms': 100000,
+      'kind': kind,
+      'natural_eof': true,
+    };
+    final before = state.withLocal(event(94999, 'stop'), 100000);
+    expect(before.played, false);
+    expect(before.inProgress, true);
+    expect(before.positionMs, 94999);
+    expect(before.completedAt, isNull);
+    for (final input in [event(95000, 'progress'), event(1000, 'complete')]) {
+      final completed = state.withLocal(input, 100000);
+      expect(completed.played, true);
+      expect(completed.inProgress, false);
+      expect(completed.positionMs, 0);
+      expect(completed.completedAt, at);
+    }
+  });
+
   test('completion must follow the copy date; older/unknown completion never hides current progress', () {
     const media = TedMediaIdentity('movie', 'tt1234567');
     final downloaded = DateTime.utc(2026, 10, 12, 12),

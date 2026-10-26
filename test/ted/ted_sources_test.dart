@@ -609,9 +609,9 @@ void main() {
     addTearDown(auth.close);
     await auth.login('https://ted.example', 'fixture', '', 'Desktop');
     final client = TedClient(auth);
-    expect((await client.nextForShow('tt1234567'))?.media, media);
+    expect((await client.nextForSeries('tt1234567'))?.media, media);
     failed = true;
-    await expectLater(client.nextForShow('tt1234567'), throwsA(isA<TedFailure>()));
+    await expectLater(client.nextForSeries('tt1234567'), throwsA(isA<TedFailure>()));
   });
   test('source transport uses safe handles and preserves previous-session matching', () async {
     final now = DateTime.utc(2026, 10, 10);

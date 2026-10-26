@@ -34,19 +34,19 @@ Map<String, dynamic> event(int seq, {String kind = 'progress'}) => {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
-  test('brief offline viewing retains receipts but no resume until 15 percent, including after restart', () async {
+  test('brief offline viewing retains receipts but no resume until 5 percent, including after restart', () async {
     final db = AppDatabase.forTesting(NativeDatabase.memory());
     addTearDown(db.close);
     var store = TedLocalStore(db);
     await store.record('scope', viewing, {...event(1, kind: 'start'), 'position_ms': 0}, offline: true);
-    await store.record('scope', viewing, {...event(2), 'position_ms': 14999}, offline: true);
+    await store.record('scope', viewing, {...event(2), 'position_ms': 4999}, offline: true);
     expect(await store.lastPosition('scope', media), isNull);
     expect(await store.pending('scope'), 2);
     store = TedLocalStore(db);
-    await store.record('scope', viewing, {...event(3), 'position_ms': 15000}, offline: true);
-    expect((await store.lastPosition('scope', media))!['position_ms'], 15000);
-    await store.record('scope', viewing, {...event(4, kind: 'stop'), 'position_ms': 5000}, offline: true);
+    await store.record('scope', viewing, {...event(3), 'position_ms': 5000}, offline: true);
     expect((await store.lastPosition('scope', media))!['position_ms'], 5000);
+    await store.record('scope', viewing, {...event(4, kind: 'stop'), 'position_ms': 1000}, offline: true);
+    expect((await store.lastPosition('scope', media))!['position_ms'], 1000);
     expect(await store.lastPosition('other', media), isNull);
   });
   test('uncertain refresh restores only offline identity; sign-out markers hide device files', () async {

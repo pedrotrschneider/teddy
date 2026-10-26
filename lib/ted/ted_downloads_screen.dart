@@ -405,8 +405,7 @@ class TedDownloadsScreenState extends State<TedDownloadsScreen> {
                                     overflow: TextOverflow.ellipsis,
                                     style: Theme.of(context).textTheme.titleLarge,
                                   ),
-                                  if (node.kind == 'episode')
-                                    Text('S${node.media!.id.split(':')[1]} E${node.media!.id.split(':')[2]}'),
+                                  if (node.kind == 'episode') Text('S${node.seasonNumber} E${node.episodeNumber}'),
                                   Text(tedDiskSize(node.bytes), style: Theme.of(context).textTheme.bodyMedium),
                                   if (progress != null && (node.expandable || progress.pending)) ...[
                                     Text(progress.label),

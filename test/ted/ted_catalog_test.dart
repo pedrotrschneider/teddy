@@ -84,7 +84,7 @@ void main() {
       now: () => now,
       client: MockClient((request) async {
         if (request.url.path.endsWith('/login')) {
-          return http.Response(jsonEncode(pair(now)), 200, headers: {'x-ted-compatibility-version': '0.2'});
+          return http.Response(jsonEncode(pair(now)), 200, headers: {'x-ted-compatibility-version': '0.3'});
         }
         expect(request.headers['Authorization'], 'Bearer ted_a_${'a' * 43}');
         final query = request.url.queryParameters;
@@ -97,7 +97,7 @@ void main() {
               'next_skip': null,
             }),
             200,
-            headers: {'x-ted-compatibility-version': '0.2'},
+            headers: {'x-ted-compatibility-version': '0.3'},
           );
         }
         expect(query['skip'], '50');
@@ -107,7 +107,7 @@ void main() {
             'next_skip': 100,
           }),
           200,
-          headers: {'x-ted-compatibility-version': '0.2'},
+          headers: {'x-ted-compatibility-version': '0.3'},
         );
       }),
     );

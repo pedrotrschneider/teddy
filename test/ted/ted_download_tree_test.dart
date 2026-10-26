@@ -96,6 +96,47 @@ void main() {
     resetSharedPreferencesForTest();
     await SettingsService.getInstance();
   });
+
+  test('download folders and adjacency follow saved display order while retaining original episode IDs', () async {
+    final root = await Directory.systemTemp.createTemp('ted-reordered-downloads-');
+    addTearDown(() => root.delete(recursive: true));
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    addTearDown(db.close);
+    final auth = TedAuth(store: MemoryStore(), client: MockClient((_) async => throw StateError('offline')));
+    addTearDown(auth.close);
+    const first = TedMediaIdentity('episode', 'tt1234567:21:1');
+    const next = TedMediaIdentity('episode', 'tt1234567:20:1');
+    final values = [file('', 1, first, 'First'), file('', 2, next, 'Second')];
+    for (var i = 0; i < values.length; i++) {
+      values[i]['metadata'] = MediaItem.ted(
+        id: [first, next][i].id,
+        kind: MediaKind.episode,
+        title: ['First', 'Second'][i],
+        grandparentTitle: 'Series',
+        parentIndex: 20,
+        index: 432 + i,
+      ).toJson();
+    }
+    final manager = PresentationDownloads(
+      TedClient(auth),
+      PresentationStore(db),
+      root,
+      values,
+    );
+    addTearDown(manager.dispose);
+    for (final value in values) {
+      final directory = manager.directory(value['id'] as String);
+      await directory.create(recursive: true);
+      await File('${directory.path}/media.bin').writeAsBytes(List.filled(10, 0));
+    }
+    final series = tedDownloadTree(manager, values, [], {}).single;
+    expect(series.children.single.title, 'Season 20');
+    expect(series.children.single.children.map((v) => (v.media, v.episodeNumber)), [(first, 432), (next, 433)]);
+    // Local playback and reports continue to use their original source IDs.
+    expect(series.identities, {first, next});
+    expect((await manager.offlineTargets(first)).next?.media, next);
+    expect((await manager.offlineTargets(next)).previous?.media, first);
+  });
   test('group removal preflights active playback, totals disk files and retains other seasons and history', () async {
     final root = await Directory.systemTemp.createTemp('ted-tree-');
     addTearDown(() => root.delete(recursive: true));

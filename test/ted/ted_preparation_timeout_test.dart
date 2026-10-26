@@ -28,7 +28,7 @@ class HeldPreparationClient extends http.BaseClient {
   http.StreamedResponse reply(Map<String, dynamic> value, [int status = 200]) => http.StreamedResponse(
     Stream.value(utf8.encode(jsonEncode(value))),
     status,
-    headers: {'x-ted-compatibility-version': '0.2'},
+    headers: {'x-ted-compatibility-version': '0.3'},
   );
 }
 

@@ -3,7 +3,59 @@ import 'ted_joint_watch.dart';
 import 'ted_user_watch.dart';
 import 'ted_models.dart';
 
+// Provider controls describe manual edits across the entire series, including
+// seasons hidden by the selected provider's structure.
+class TedSeriesMetadataProvider {
+  final String provider, status, error, overridesVersion;
+  final bool canChange;
+  final int artworkOverrides, metadataOverrides;
+  const TedSeriesMetadataProvider({
+    required this.provider,
+    required this.canChange,
+    required this.status,
+    required this.error,
+    required this.overridesVersion,
+    required this.artworkOverrides,
+    required this.metadataOverrides,
+  });
+  bool get hasOverrides => artworkOverrides + metadataOverrides > 0;
+  factory TedSeriesMetadataProvider.fromJson(Map<String, dynamic> data) {
+    final provider = data['provider'], status = data['status'], error = data['error_code'];
+    final revision = data['revision'], canChange = data['can_change'], overrides = data['overrides'];
+    if (provider is! String ||
+        !const ['Tmdb', 'Tvdb'].contains(provider) ||
+        status is! String ||
+        !const ['new', 'queued', 'ready', 'partial', 'failed', 'missing', 'not_configured'].contains(status) ||
+        error is! String ||
+        revision is! int ||
+        revision < 0 ||
+        canChange is! bool ||
+        overrides is! Map<String, dynamic>) {
+      throw const TedFailure('invalid_response');
+    }
+    final artwork = overrides['artwork'], metadata = overrides['metadata'], version = overrides['version'];
+    if (artwork is! int ||
+        artwork < 0 ||
+        metadata is! int ||
+        metadata < 0 ||
+        version is! String ||
+        !RegExp(r'^[a-f0-9]{64}$').hasMatch(version)) {
+      throw const TedFailure('invalid_response');
+    }
+    return TedSeriesMetadataProvider(
+      provider: provider,
+      canChange: canChange,
+      status: status,
+      error: error,
+      artworkOverrides: artwork,
+      metadataOverrides: metadata,
+      overridesVersion: version,
+    );
+  }
+}
+
 class TedMetadataSnapshot {
+  final bool scopedCast;
   final String id, status, name, overview, type;
   final int generation;
   final String originalLanguage;
@@ -23,6 +75,7 @@ class TedMetadataSnapshot {
     required this.type,
     required this.images,
     this.people = const [],
+    this.scopedCast = false,
     this.originalLanguage = '',
     this.year,
     this.rating,
@@ -43,6 +96,7 @@ class TedMetadataSnapshot {
         name: item['Name'] as String? ?? '',
         overview: item['Overview'] as String? ?? '',
         type: item['Type'] as String,
+        scopedCast: json['scoped_cast'] as bool? ?? false,
         originalLanguage: json['original_language'] as String? ?? '',
         year: item['ProductionYear'] as int?,
         rating: (item['CommunityRating'] as num?)?.toDouble(),
@@ -161,14 +215,16 @@ class TedFilmographyEntry {
 }
 
 class TedFilmographyPage {
+  final bool pending;
   final List<TedFilmographyEntry> items;
   final String? nextAfter;
-  const TedFilmographyPage(this.items, this.nextAfter);
+  const TedFilmographyPage(this.items, this.nextAfter, {this.pending = false});
   factory TedFilmographyPage.fromJson(Map<String, dynamic> json) {
     try {
       final value = TedFilmographyPage(
         (json['items'] as List).map((v) => TedFilmographyEntry.fromJson(v as Map<String, dynamic>)).toList(),
         json['next_after'] as String?,
+        pending: json['pending'] as bool? ?? false,
       );
       if (value.items.length > 20 ||
           (value.nextAfter != null && !tedUuid(value.nextAfter!)) ||

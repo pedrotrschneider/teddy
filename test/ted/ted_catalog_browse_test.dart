@@ -442,11 +442,11 @@ void main() {
           return http.Response(
             jsonEncode(pair(DateTime.now().toUtc())),
             200,
-            headers: {'x-ted-compatibility-version': '0.2'},
+            headers: {'x-ted-compatibility-version': '0.3'},
           );
         }
         requests.add(request.url);
-        return http.Response(jsonEncode(response), 200, headers: {'x-ted-compatibility-version': '0.2'});
+        return http.Response(jsonEncode(response), 200, headers: {'x-ted-compatibility-version': '0.3'});
       }),
     );
     addTearDown(auth.close);

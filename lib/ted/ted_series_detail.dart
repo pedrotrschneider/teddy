@@ -88,7 +88,7 @@ class TedSeriesDetailState extends State<TedSeriesDetail> {
   final _seasons = GlobalKey<HubSectionState>();
   final _cast = GlobalKey<TedCastRowState>();
   final _memory = HubFocusMemory();
-  late final _artwork = _SeasonArtwork(widget.client, widget.initial);
+  late var _artwork = _SeasonArtwork(widget.client, widget.initial);
   late TedTitle _title = widget.initial;
   late TedMetadataSnapshot? _metadata = widget.initial.enrichment;
   TedSeriesWatch? _watch;
@@ -97,6 +97,7 @@ class TedSeriesDetailState extends State<TedSeriesDetail> {
   String? _error;
   int _generation = 0;
   bool _seasonsRevealPending = false;
+  bool _changingProvider = false;
   TedTitle get title => _title;
   bool requestFocus() => switch (_lane) {
     'cast' => (_cast.currentState?.requestFocus() ?? false) || _focusSeasons(),
@@ -208,179 +209,314 @@ class TedSeriesDetailState extends State<TedSeriesDetail> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) => LayoutBuilder(
-    builder: (context, box) => SingleChildScrollView(
-      controller: _scroll,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+  Future<void> _metadataOptions() async {
+    final scope = (widget.client.auth.server, widget.client.auth.userId);
+    final change = await showDialog<bool>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('Series options'),
         children: [
-          SizedBox(
-            // Leave room for the actions and full Seasons shelf on opening.
-            height: (box.maxHeight - 466.0).clamp(280.0, 600.0),
-            child: TedHomeBanner(
-              client: widget.client,
-              entries: [_title],
-              refreshEpoch: 0,
-              catalogPreview: true,
-              debounceEnrichment: false,
-              loadDetails: false,
-              showReleaseDate: true,
-              releaseDate: _metadata?.premiereDate,
-              contentHorizontalInset: widget.horizontalInset,
-              onPlay: (_) async {},
-              onOpen: (_) async {},
-              onBack: widget.onSidebar,
-              onMetadata: (_, snapshot) {
-                if (mounted && snapshot.type == 'Series') setState(() => _metadata = snapshot);
-              },
-            ),
+          SimpleDialogOption(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Change metadata provider'),
           ),
-          if (_loading || _working) const LinearProgressIndicator(),
-          TedFocusRegion(
-            key: _actions,
-            scroll: false,
-            onUp: widget.onHeader,
-            onDown: () => _focusSeasons(),
-            onLeft: widget.onSidebar,
-            onBack: widget.onClose,
-            child: Padding(
-              padding: EdgeInsets.symmetric(horizontal: widget.horizontalInset, vertical: 12),
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 8,
-                children: [
-                  _selectable(
-                    TedDownloadButton(
-                      downloads: widget.downloads,
-                      media: _title.media,
-                      label: 'Download series',
-                      onPressed: _working || _loading || widget.onDownload == null || _title.seasons.isEmpty
-                          ? null
-                          : () => _work(() => widget.onDownload!(_title)),
-                    ),
-                  ),
-                  _selectable(
-                    OutlinedButton.icon(
-                      onPressed: _working || _loading || _watch == null || _watch!.count == 0
-                          ? null
-                          : () => _work(
-                              () => widget.client.setSeriesWatched(_title.media.id, _watch!.version, !_title.played),
-                            ),
-                      icon: Icon(_title.played ? Icons.check_circle : Icons.check_circle_outline),
-                      label: Text(_title.played ? 'Mark series unwatched' : 'Mark series watched'),
-                    ),
-                  ),
-                  _selectable(
-                    TedTitlePreferencesButtons(
-                      onFocused: () {
-                        _lane = 'actions';
-                        _top();
-                      },
-                      client: widget.client,
-                      title: _title,
-                      onChanged: (state) => setState(() => _title = _title.withPreferences(state)),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-          if (_error != null)
-            Padding(
-              padding: EdgeInsets.symmetric(horizontal: widget.horizontalInset),
-              child: Row(
-                children: [
-                  Expanded(child: Text(_error!)),
-                  TextButton(onPressed: _working || _loading ? null : reload, child: const Text('Retry')),
-                ],
-              ),
-            ),
-          Padding(
-            padding: EdgeInsets.symmetric(horizontal: (widget.horizontalInset - 3).clamp(0, double.infinity)),
-            child: HubSection(
-              key: _seasons,
-              showUnviewedCount: true,
-              hub: MediaHub(
-                id: 'seasons:${_title.media.id}',
-                title: 'Seasons',
-                type: 'season',
-                serverId: TedPresentation(widget.client).scope,
-                items: [
-                  for (final season
-                      in ([..._title.seasons]..sort(
-                        (a, b) => a == 0
-                            ? (b == 0 ? 0 : 1)
-                            : b == 0
-                            ? -1
-                            : a.compareTo(b),
-                      )))
-                    MediaItem.ted(
-                      id: 'season/${_title.media.id}/$season',
-                      serverId: TedPresentation(widget.client).scope,
-                      serverName: 'TED',
-                      kind: MediaKind.season,
-                      title: season == 0 ? 'Specials' : 'Season $season',
-                      index: season,
-                      leafCount: _watch?.seasonCounts[season]?.$1,
-                      viewedLeafCount: _watch?.seasonCounts[season]?.$2,
-                      raw: {
-                        'user_watches': _watch?.userCounts[season]?.map((w) => w.toJson()).toList() ?? [],
-                        'joint_watches': _watch?.jointCounts[season]?.map((w) => w.toJson()).toList() ?? [],
-                      },
-                      thumbPath: _title.poster,
-                    ),
-                ],
-              ),
-              focusMemory: _memory,
-              icon: Icons.video_library_outlined,
-              inset: true,
-              cardSizing: HubCardSizing.grid,
-              maxCardWidth: 180,
-              onItemTap: (item) => widget.onSeason(item.index!),
-              onItemLongPress: (_) {},
-              onFocusedItemChanged: (_) {
-                _lane = 'seasons';
-                _revealSeasons();
-              },
-              onNavigateToSidebar: widget.onSidebar,
-              onBack: widget.onClose,
-              onVerticalNavigation: (up) {
-                if (up) {
-                  _actions.currentState?.requestFocus();
-                } else {
-                  _cast.currentState?.requestFocus();
-                }
-                return true;
-              },
-              autoScroll: false,
-              artworkBuilder: (context, item, width, height) => _SeasonPoster(
-                artwork: _artwork,
-                season: item.index!,
-                width: width,
-                height: height,
-                fallback: _title.poster,
-              ),
-            ),
-          ),
-          TedCastRow(
-            key: _cast,
-            client: widget.client,
-            people: _metadata?.people ?? const [],
-            loading: _loading || _metadata?.pending == true,
-            horizontalInset: widget.horizontalInset,
-            onUp: () => _focusSeasons(),
-            onLeft: widget.onSidebar,
-            onBack: widget.onClose,
-            onFocusChanged: (value) {
-              if (value) _lane = 'cast';
-            },
-            onPerson: (person) => widget.onPerson(person, _title, _metadata),
-          ),
-          const SizedBox(height: 24),
         ],
       ),
-    ),
+    );
+    if (change != true || !mounted || scope != (widget.client.auth.server, widget.client.auth.userId)) return;
+    var submitted = false;
+    try {
+      final current = await widget.client.seriesMetadataProvider(_title.media.id);
+      if (!mounted || scope != (widget.client.auth.server, widget.client.auth.userId)) return;
+      if (!current.canChange) throw const TedFailure('forbidden');
+      final from = current.provider == 'Tmdb' ? 'TMDB' : 'TVDB', to = current.provider == 'Tmdb' ? 'TVDB' : 'TMDB';
+      var keepOverrides = false;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => StatefulBuilder(
+          builder: (context, setChoice) => AlertDialog(
+            title: const Text('Change metadata provider'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Currently using $from. Change to $to?\n\nThis changes metadata and season/episode organization for everyone on this server. Existing history, downloads and source mappings are preserved.',
+                  ),
+                  if (current.hasOverrides) ...[
+                    const SizedBox(height: 16),
+                    Text(
+                      '${current.artworkOverrides} artwork overrides and ${current.metadataOverrides} metadata overrides, including any hidden seasons.',
+                    ),
+                    RadioGroup<bool>(
+                      groupValue: keepOverrides,
+                      onChanged: (v) => setChoice(() => keepOverrides = v ?? false),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: const [
+                          RadioListTile<bool>(value: false, title: Text('Remove overrides and use the new provider')),
+                          RadioListTile<bool>(value: true, title: Text('Keep my overrides')),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+              FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Change provider')),
+            ],
+          ),
+        ),
+      );
+      if (confirmed != true || !mounted || scope != (widget.client.auth.server, widget.client.auth.userId)) return;
+      submitted = true;
+      setState(() {
+        _changingProvider = true;
+        _error = null;
+      });
+      final snapshot = await widget.client.changeSeriesMetadataProvider(
+        _title.media.id,
+        current.provider,
+        keepOverrides: keepOverrides,
+        overridesVersion: current.overridesVersion,
+      );
+      if (!mounted || scope != (widget.client.auth.server, widget.client.auth.userId)) return;
+      _artwork.dispose();
+      _artwork = _SeasonArtwork(widget.client, _title);
+      setState(() {
+        _metadata = null;
+        _lane = 'seasons';
+        _focusOnLoad = true;
+      });
+      await reload();
+      unawaited(_refreshChangedProvider(snapshot, _generation, scope));
+    } catch (error) {
+      if (mounted) setState(() => _error = _message(error));
+    } finally {
+      if (submitted && mounted && scope == (widget.client.auth.server, widget.client.auth.userId)) {
+        setState(() => _changingProvider = false);
+      }
+    }
+  }
+
+  Future<void> _refreshChangedProvider(TedMetadataSnapshot snapshot, int generation, (Uri?, int?) scope) async {
+    bool current() =>
+        mounted && generation == _generation && scope == (widget.client.auth.server, widget.client.auth.userId);
+    try {
+      for (var attempt = 0; attempt < 180 && snapshot.pending && current(); attempt++) {
+        await Future<void>.delayed(const Duration(seconds: 1));
+        if (!current()) return;
+        snapshot = await widget.client.metadata(snapshot.id);
+      }
+      if (!current()) return;
+      if (snapshot.pending) throw const TedFailure('metadata_still_preparing');
+      if (snapshot.unavailable) throw const TedFailure('metadata_refresh_failed');
+      // Refresh the root and its verified structure without holding a modal or
+      // changing focus. Seasons/episodes still enrich only on screen access.
+      _focusOnLoad = false;
+      await reload();
+    } catch (error) {
+      if (current()) setState(() => _error = _message(error));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, box) => _changingProvider
+        ? const Center(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [CircularProgressIndicator(), SizedBox(height: 16), Text('Changing metadata provider…')],
+            ),
+          )
+        : SingleChildScrollView(
+            controller: _scroll,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                SizedBox(
+                  // Leave room for the actions and full Seasons shelf on opening.
+                  height: (box.maxHeight - 466.0).clamp(280.0, 600.0),
+                  child: TedHomeBanner(
+                    client: widget.client,
+                    entries: [_title],
+                    refreshEpoch: 0,
+                    catalogPreview: true,
+                    debounceEnrichment: false,
+                    loadDetails: false,
+                    showReleaseDate: true,
+                    releaseDate: _metadata?.premiereDate,
+                    contentHorizontalInset: widget.horizontalInset,
+                    onPlay: (_) async {},
+                    onOpen: (_) async {},
+                    onBack: widget.onSidebar,
+                    onMetadata: (_, snapshot) {
+                      if (mounted && snapshot.type == 'Series') setState(() => _metadata = snapshot);
+                    },
+                  ),
+                ),
+                if (_loading || _working) const LinearProgressIndicator(),
+                TedFocusRegion(
+                  key: _actions,
+                  scroll: false,
+                  onUp: widget.onHeader,
+                  onDown: () => _focusSeasons(),
+                  onLeft: widget.onSidebar,
+                  onBack: widget.onClose,
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(horizontal: widget.horizontalInset, vertical: 12),
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _selectable(
+                          TedDownloadButton(
+                            downloads: widget.downloads,
+                            media: _title.media,
+                            label: 'Download series',
+                            onPressed: _working || _loading || widget.onDownload == null || _title.seasons.isEmpty
+                                ? null
+                                : () => _work(() => widget.onDownload!(_title)),
+                          ),
+                        ),
+                        _selectable(
+                          OutlinedButton.icon(
+                            onPressed: _working || _loading || _watch == null || _watch!.count == 0
+                                ? null
+                                : () => _work(
+                                    () => widget.client.setSeriesWatched(
+                                      _title.media.id,
+                                      _watch!.version,
+                                      !_title.played,
+                                    ),
+                                  ),
+                            icon: Icon(_title.played ? Icons.check_circle : Icons.check_circle_outline),
+                            label: Text(_title.played ? 'Mark series unwatched' : 'Mark series watched'),
+                          ),
+                        ),
+                        _selectable(
+                          TedTitlePreferencesButtons(
+                            onFocused: () {
+                              _lane = 'actions';
+                              _top();
+                            },
+                            client: widget.client,
+                            title: _title,
+                            onChanged: (state) => setState(() => _title = _title.withPreferences(state)),
+                          ),
+                        ),
+                        if (_title.canChangeMetadataProvider)
+                          _selectable(
+                            Tooltip(
+                              message: 'Series options',
+                              child: OutlinedButton(
+                                onPressed: _working || _loading ? null : _metadataOptions,
+                                child: const Icon(Icons.more_vert),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                ),
+                if (_error != null)
+                  Padding(
+                    padding: EdgeInsets.symmetric(horizontal: widget.horizontalInset),
+                    child: Row(
+                      children: [
+                        Expanded(child: Text(_error!)),
+                        TextButton(onPressed: _working || _loading ? null : reload, child: const Text('Retry')),
+                      ],
+                    ),
+                  ),
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: (widget.horizontalInset - 3).clamp(0, double.infinity)),
+                  child: HubSection(
+                    key: _seasons,
+                    showUnviewedCount: true,
+                    hub: MediaHub(
+                      id: 'seasons:${_title.media.id}',
+                      title: 'Seasons',
+                      type: 'season',
+                      serverId: TedPresentation(widget.client).scope,
+                      items: [
+                        for (final season
+                            in ([..._title.seasons]..sort(
+                              (a, b) => a == 0
+                                  ? (b == 0 ? 0 : 1)
+                                  : b == 0
+                                  ? -1
+                                  : a.compareTo(b),
+                            )))
+                          MediaItem.ted(
+                            id: 'season/${_title.media.id}/$season',
+                            serverId: TedPresentation(widget.client).scope,
+                            serverName: 'TED',
+                            kind: MediaKind.season,
+                            title: season == 0 ? 'Specials' : 'Season $season',
+                            index: season,
+                            leafCount: _watch?.seasonCounts[season]?.$1,
+                            viewedLeafCount: _watch?.seasonCounts[season]?.$2,
+                            raw: {
+                              'user_watches': _watch?.userCounts[season]?.map((w) => w.toJson()).toList() ?? [],
+                              'joint_watches': _watch?.jointCounts[season]?.map((w) => w.toJson()).toList() ?? [],
+                            },
+                            thumbPath: _title.poster,
+                          ),
+                      ],
+                    ),
+                    focusMemory: _memory,
+                    icon: Icons.video_library_outlined,
+                    inset: true,
+                    cardSizing: HubCardSizing.grid,
+                    maxCardWidth: 180,
+                    onItemTap: (item) => widget.onSeason(item.index!),
+                    onItemLongPress: (_) {},
+                    onFocusedItemChanged: (_) {
+                      _lane = 'seasons';
+                      _revealSeasons();
+                    },
+                    onNavigateToSidebar: widget.onSidebar,
+                    onBack: widget.onClose,
+                    onVerticalNavigation: (up) {
+                      if (up) {
+                        _actions.currentState?.requestFocus();
+                      } else {
+                        _cast.currentState?.requestFocus();
+                      }
+                      return true;
+                    },
+                    autoScroll: false,
+                    artworkBuilder: (context, item, width, height) => _SeasonPoster(
+                      artwork: _artwork,
+                      season: item.index!,
+                      width: width,
+                      height: height,
+                      fallback: _title.poster,
+                    ),
+                  ),
+                ),
+                TedCastRow(
+                  key: _cast,
+                  client: widget.client,
+                  people: _metadata?.people ?? const [],
+                  loading: _loading || _metadata?.pending == true,
+                  horizontalInset: widget.horizontalInset,
+                  onUp: () => _focusSeasons(),
+                  onLeft: widget.onSidebar,
+                  onBack: widget.onClose,
+                  onFocusChanged: (value) {
+                    if (value) _lane = 'cast';
+                  },
+                  onPerson: (person) => widget.onPerson(person, _title, _metadata),
+                ),
+                const SizedBox(height: 24),
+              ],
+            ),
+          ),
   );
 }
 
@@ -815,8 +951,8 @@ class TedSeasonDetailState extends State<TedSeasonDetail> {
           TedCastRow(
             key: _cast,
             client: widget.client,
-            people: _show.enrichment?.people ?? const [],
-            loading: _show.enrichment?.pending == true,
+            people: (_seasonMetadata?.scopedCast == true ? _seasonMetadata : _show.enrichment)?.people ?? const [],
+            loading: _seasonMetadata?.pending == true || _show.enrichment?.pending == true,
             horizontalInset: widget.horizontalInset,
             onUp: () {
               _lane = 'episodes';
@@ -877,7 +1013,7 @@ class _SeasonArtwork {
     TedMetadataSnapshot? snapshot;
     Uint8List? bytes;
     try {
-      var current = await client.season(show.media.id, season);
+      var current = await client.seasonArtwork(show.media.id, season);
       snapshot = current;
       for (var i = 0; valid && current.pending && i < 20; i++) {
         await Future<void>.delayed(const Duration(seconds: 1));

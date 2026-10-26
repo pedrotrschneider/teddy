@@ -48,13 +48,13 @@ void main() {
       now: () => now,
       client: MockClient((r) async {
         if (r.url.path.endsWith('/login')) {
-          return http.Response(jsonEncode(pair(now)), 200, headers: {'x-ted-compatibility-version': '0.2'});
+          return http.Response(jsonEncode(pair(now)), 200, headers: {'x-ted-compatibility-version': '0.3'});
         }
         if (r.url.path.contains('/catalog/')) {
           return http.Response(
             jsonEncode({'titles': [], 'next_skip': null}),
             200,
-            headers: {'x-ted-compatibility-version': '0.2'},
+            headers: {'x-ted-compatibility-version': '0.3'},
           );
         }
         expect(r.url.path, startsWith('/api/client/v1/rows/'));
@@ -63,12 +63,12 @@ void main() {
           expect(r.url.queryParameters['after'], 'saved-cursor');
         }
         if (omit && r.url.path.endsWith('/new-releases')) {
-          return http.Response('{}', 200, headers: {'x-ted-compatibility-version': '0.2'});
+          return http.Response('{}', 200, headers: {'x-ted-compatibility-version': '0.3'});
         }
         return http.Response(
           jsonEncode({'titles': [], 'issues': [], 'next_after': ''}),
           200,
-          headers: {'x-ted-compatibility-version': '0.2'},
+          headers: {'x-ted-compatibility-version': '0.3'},
         );
       }),
     );

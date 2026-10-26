@@ -34,6 +34,62 @@ Map<String, dynamic> metadataData({String status = 'ready', bool images = false}
   ],
 };
 void main() {
+  test('provider controls require complete override review and submit its exact decision', () async {
+    final now = DateTime.utc(2026, 10, 25);
+    final version = 'b' * 64;
+    final data = <String, dynamic>{
+      'provider': 'Tvdb',
+      'revision': 0,
+      'can_change': true,
+      'status': 'ready',
+      'error_code': '',
+      'overrides': {'artwork': 22, 'metadata': 1, 'version': version},
+    };
+    final auth = TedAuth(
+      store: MemoryStore(),
+      now: () => now,
+      client: MockClient((request) async {
+        if (request.url.path.endsWith('/login')) {
+          return http.Response(jsonEncode(pair(now)), 200, headers: {'x-ted-compatibility-version': '0.3'});
+        }
+        expect(request.url.path, '/api/client/v1/titles/series/tt1234567/metadata-provider');
+        if (request.method == 'POST') {
+          expect(jsonDecode(request.body), {
+            'expected_provider': 'Tvdb',
+            'provider': 'Tmdb',
+            'override_action': 'remove',
+            'overrides_version': version,
+          });
+          return http.Response(
+            jsonEncode(metadataData(status: 'queued')),
+            202,
+            headers: {'x-ted-compatibility-version': '0.3'},
+          );
+        }
+        return http.Response(jsonEncode(data), 200, headers: {'x-ted-compatibility-version': '0.3'});
+      }),
+    );
+    addTearDown(auth.close);
+    await auth.login('https://ted.example', 'u', '', 'Provider fixture');
+    final client = TedClient(auth), review = await client.seriesMetadataProvider('tt1234567');
+    expect(review.hasOverrides, true);
+    expect(review.artworkOverrides, 22);
+    final changed = await client.changeSeriesMetadataProvider(
+      'tt1234567',
+      review.provider,
+      keepOverrides: false,
+      overridesVersion: review.overridesVersion,
+    );
+    expect(changed.pending, true);
+    for (final invalid in [
+      null,
+      {'artwork': -1, 'metadata': 1, 'version': version},
+      {'artwork': 22, 'metadata': 1, 'version': 'old'},
+    ]) {
+      expect(() => TedSeriesMetadataProvider.fromJson({...data, 'overrides': invalid}), throwsA(isA<TedFailure>()));
+    }
+  });
+
   test('person details retain media server dates/locations and typed paginated personal credit summaries', () async {
     final now = DateTime.utc(2026, 10, 11);
     final person = metadataData();
@@ -62,7 +118,7 @@ void main() {
       now: () => now,
       client: MockClient((request) async {
         if (request.url.path.endsWith('/login')) {
-          return http.Response(jsonEncode(pair(now)), 200, headers: {'x-ted-compatibility-version': '0.2'});
+          return http.Response(jsonEncode(pair(now)), 200, headers: {'x-ted-compatibility-version': '0.3'});
         }
         expect(request.headers['Authorization'], 'Bearer ted_a_${'a' * 43}');
         if (request.url.path.endsWith('/filmography')) {
@@ -72,11 +128,11 @@ void main() {
               'items': [summary],
             }),
             200,
-            headers: {'x-ted-compatibility-version': '0.2'},
+            headers: {'x-ted-compatibility-version': '0.3'},
           );
         }
         expect(request.url.path, '/api/client/v1/metadata/people/$itemId');
-        return http.Response(jsonEncode(person), 200, headers: {'x-ted-compatibility-version': '0.2'});
+        return http.Response(jsonEncode(person), 200, headers: {'x-ted-compatibility-version': '0.3'});
       }),
     );
     addTearDown(auth.close);
@@ -120,7 +176,7 @@ void main() {
       now: () => now,
       client: MockClient((request) async {
         if (request.url.path.endsWith('/login')) {
-          return http.Response(jsonEncode(pair(now)), 200, headers: {'x-ted-compatibility-version': '0.2'});
+          return http.Response(jsonEncode(pair(now)), 200, headers: {'x-ted-compatibility-version': '0.3'});
         }
         if (request.url.path.endsWith('/refresh')) {
           rotations++;
@@ -129,7 +185,7 @@ void main() {
           return http.Response(
             jsonEncode(pair(now, suffix: 'b')),
             200,
-            headers: {'x-ted-compatibility-version': '0.2'},
+            headers: {'x-ted-compatibility-version': '0.3'},
           );
         }
         expect(request.url.host, 'ted.example');
@@ -138,17 +194,17 @@ void main() {
           rejected++;
           if (rejected == 2) rejectedTogether.complete();
           await rejectedTogether.future;
-          return http.Response('{}', 401, headers: {'x-ted-compatibility-version': '0.2'});
+          return http.Response('{}', 401, headers: {'x-ted-compatibility-version': '0.3'});
         }
         expect(request.headers['Authorization'], 'Bearer ted_a_${'b' * 43}');
         if (request.url.path.contains('/images/')) {
           return http.Response.bytes(
             [1, 2, 3],
             200,
-            headers: {'x-ted-compatibility-version': '0.2', 'content-type': 'image/png'},
+            headers: {'x-ted-compatibility-version': '0.3', 'content-type': 'image/png'},
           );
         }
-        return http.Response(jsonEncode(metadataData()), 200, headers: {'x-ted-compatibility-version': '0.2'});
+        return http.Response(jsonEncode(metadataData()), 200, headers: {'x-ted-compatibility-version': '0.3'});
       }),
     );
     addTearDown(auth.close);
@@ -171,12 +227,12 @@ void main() {
       now: () => now,
       client: MockClient((request) async {
         if (request.url.path.endsWith('/login')) {
-          return http.Response(jsonEncode(pair(now)), 200, headers: {'x-ted-compatibility-version': '0.2'});
+          return http.Response(jsonEncode(pair(now)), 200, headers: {'x-ted-compatibility-version': '0.3'});
         }
         return http.Response(
           '{}',
           status,
-          headers: {'x-ted-compatibility-version': '0.2', 'content-type': contentType},
+          headers: {'x-ted-compatibility-version': '0.3', 'content-type': contentType},
         );
       }),
     );
@@ -223,7 +279,7 @@ void main() {
       now: () => now,
       client: MockClient((request) async {
         if (request.url.path.endsWith('/login')) {
-          return http.Response(jsonEncode(pair(now)), 200, headers: {'x-ted-compatibility-version': '0.2'});
+          return http.Response(jsonEncode(pair(now)), 200, headers: {'x-ted-compatibility-version': '0.3'});
         }
         requests++;
         expect(request.url.toString(), 'https://ted.example/api/client/v1/metadata/items/$itemId/images/Primary');
@@ -231,7 +287,7 @@ void main() {
         return http.Response.bytes(
           [1, 2, 3],
           status,
-          headers: {'x-ted-compatibility-version': '0.2', 'content-type': mime},
+          headers: {'x-ted-compatibility-version': '0.3', 'content-type': mime},
         );
       }),
     );

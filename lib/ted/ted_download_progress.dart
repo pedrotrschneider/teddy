@@ -105,17 +105,19 @@ class TedDownloadProgress {
     TedMediaIdentity media, {
     int? season,
   }) {
-    bool matches(TedMediaIdentity candidate) {
+    bool matches(TedMediaIdentity candidate, Map<String, dynamic> row) {
       if (media.kind != 'series') return candidate == media;
       if (candidate.kind != 'episode') return false;
       final parts = candidate.id.split(':');
-      return parts[0] == media.id && (season == null || int.parse(parts[1]) == season);
+      final metadata = row['metadata'] as Map?;
+      return parts[0] == media.id &&
+          (season == null || (metadata?['parentIndex'] as int? ?? int.parse(parts[1])) == season);
     }
 
     final selected = <TedMediaIdentity, Map<String, dynamic>>{};
     for (final row in [...queue, ...files]) {
       final identity = TedMediaIdentity.fromJson(Map<String, dynamic>.from(row['media'] as Map));
-      if (matches(identity)) selected[identity] = row; // prepared file wins over its queue intent
+      if (matches(identity, row)) selected[identity] = row; // prepared file wins over its queue intent
     }
     if (selected.isEmpty) return null;
     var completed = 0, received = 0, bytes = 0;

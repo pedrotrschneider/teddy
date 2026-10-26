@@ -1,7 +1,7 @@
 name: plezy
 description: "Teddy, the native client for The Entertainment District"
 publish_to: "none"
-version: 0.2.0+1000
+version: 0.3.0+1000
 
 environment:
   # Dart floor stays 3.12: freezed 3.x emits `final` constructor parameters,

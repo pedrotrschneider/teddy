@@ -20,7 +20,7 @@ void main() {
         now: () => now,
         client: MockClient((request) async {
           if (request.url.path.endsWith('/login')) {
-            return http.Response(jsonEncode(pair(now)), 200, headers: {'x-ted-compatibility-version': '0.2'});
+            return http.Response(jsonEncode(pair(now)), 200, headers: {'x-ted-compatibility-version': '0.3'});
           }
           expect(request.url.path, '/api/client/v1/catalog/$kind');
           expect(request.url.queryParameters['search'], 'The Matrix');
@@ -29,7 +29,7 @@ void main() {
             return http.Response(
               jsonEncode({'code': 'catalog_unavailable', 'error': 'private upstream URL'}),
               502,
-              headers: {'x-ted-compatibility-version': '0.2'},
+              headers: {'x-ted-compatibility-version': '0.3'},
             );
           }
           return http.Response(
@@ -37,7 +37,7 @@ void main() {
               'titles': [titleData(kind: kind)],
             }),
             200,
-            headers: {'x-ted-compatibility-version': '0.2'},
+            headers: {'x-ted-compatibility-version': '0.3'},
           );
         }),
       );
@@ -67,11 +67,11 @@ void main() {
         now: () => now,
         client: MockClient(
           (request) async => request.url.path.endsWith('/login')
-              ? http.Response(jsonEncode(pair(now)), 200, headers: {'x-ted-compatibility-version': '0.2'})
+              ? http.Response(jsonEncode(pair(now)), 200, headers: {'x-ted-compatibility-version': '0.3'})
               : http.Response(
                   jsonEncode({'code': failure.$1, 'error': 'private upstream URL'}),
                   failure.$2,
-                  headers: {'x-ted-compatibility-version': '0.2'},
+                  headers: {'x-ted-compatibility-version': '0.3'},
                 ),
         ),
       );
@@ -96,13 +96,13 @@ void main() {
         now: () => now,
         client: MockClient((request) async {
           if (request.url.path.endsWith('/login')) {
-            return http.Response(jsonEncode(pair(now)), 200, headers: {'x-ted-compatibility-version': '0.2'});
+            return http.Response(jsonEncode(pair(now)), 200, headers: {'x-ted-compatibility-version': '0.3'});
           }
           if (transport) throw http.ClientException('private upstream URL');
           return http.Response(
             jsonEncode({'code': 'private upstream URL', 'error': 'private upstream URL'}),
             503,
-            headers: {'x-ted-compatibility-version': '0.2'},
+            headers: {'x-ted-compatibility-version': '0.3'},
           );
         }),
       );

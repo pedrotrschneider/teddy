@@ -36,6 +36,7 @@ import 'ted_movie_detail_test.dart' show MovieFixture;
 import 'ted_keyboard_navigation_test.dart' show focused;
 
 class SeriesDetailFixture extends MovieFixture {
+  bool scopedCast = false;
   final watchedChanges = <bool>[];
   final episodeReads = <TedMediaIdentity>[];
   int seasonReads = 0;
@@ -47,16 +48,21 @@ class SeriesDetailFixture extends MovieFixture {
   Completer<TedMetadataSnapshot>? heldSeason;
   TedMetadataSnapshot snapshot(String type) => TedMetadataSnapshot.fromJson({
     ...metadataData(),
+    'scoped_cast': scopedCast && type != 'Series',
     'item': {
       'Id': metadataData()['item']['Id'],
       'Type': type,
       'Name': type == 'Episode' ? 'Specific episode' : 'Show logo title',
       'Overview': type == 'Episode' ? 'Only this episode description' : 'Show description',
       'People': [
-        if (type != 'Season')
+        if (type != 'Season' || scopedCast)
           {
             'Id': '55555555-5555-4555-8555-555555555555',
-            'Name': type == 'Episode' ? 'Guest performer' : 'Show performer',
+            'Name': type == 'Episode'
+                ? 'Guest performer'
+                : type == 'Season'
+                ? 'Season performer'
+                : 'Show performer',
             'Type': 'Actor',
             'Role': 'Character',
           },
@@ -78,6 +84,7 @@ class SeriesDetailFixture extends MovieFixture {
       },
       if (episode) 'parent': {'kind': 'series', 'id': tuple.first},
       'enrichment': {
+        'scoped_cast': scopedCast && episode,
         'item': {
           'Id': snapshot(episode ? 'Episode' : 'Series').id,
           'Type': episode ? 'Episode' : 'Series',
@@ -131,6 +138,9 @@ class SeriesDetailFixture extends MovieFixture {
     seasonReads++;
     return heldSeason?.future ?? snapshot('Season');
   }
+
+  @override
+  Future<TedMetadataSnapshot> seasonArtwork(String id, int season) => this.season(id, season);
 
   @override
   Future<TedEpisodePage> episodes(String id, int season, {int? after}) async => TedEpisodePage(
@@ -204,6 +214,7 @@ class EpisodeCastFixture extends SeriesDetailFixture {
         name: original.name,
         overview: original.overview,
         type: original.type,
+        scopedCast: original.scopedCast,
         images: [],
         people: queued || emptyCast ? [] : original.people,
       ),
@@ -215,6 +226,66 @@ class EpisodeCastFixture extends SeriesDetailFixture {
     metadataReads++;
     return ready.future;
   }
+}
+
+class SeriesProviderFixture extends SeriesDetailFixture {
+  bool admin = true;
+  String provider = 'Tvdb';
+  int changes = 0;
+  bool hasOverrides = false;
+  bool pendingChange = false;
+  bool? keptOverrides;
+  @override
+  Future<TedTitle> title(TedMediaIdentity media) async {
+    final original = data(media);
+    return TedTitle(
+      original.media,
+      original.name,
+      original.description,
+      original.played,
+      original.revision,
+      original.positionMs,
+      original.local,
+      canChangeMetadataProvider: admin,
+      seasons: provider == 'Tmdb' ? [7] : original.seasons,
+      enrichment: original.enrichment,
+    );
+  }
+
+  @override
+  Future<TedSeriesMetadataProvider> seriesMetadataProvider(String id) async => TedSeriesMetadataProvider(
+    provider: provider,
+    canChange: admin,
+    status: 'ready',
+    error: '',
+    artworkOverrides: hasOverrides ? 22 : 0,
+    metadataOverrides: 0,
+    overridesVersion: 'a' * 64,
+  );
+
+  @override
+  Future<TedMetadataSnapshot> changeSeriesMetadataProvider(
+    String id,
+    String current, {
+    required bool keepOverrides,
+    required String overridesVersion,
+  }) async {
+    expect(overridesVersion, 'a' * 64);
+    keptOverrides = keepOverrides;
+    expect(current, provider);
+    provider = current == 'Tvdb' ? 'Tmdb' : 'Tvdb';
+    changes++;
+    if (pendingChange) {
+      return TedMetadataSnapshot.fromJson({
+        ...metadataData(status: 'queued'),
+        'item': {'Id': metadataData()['item']['Id'], 'Type': 'Series', 'Name': 'Queued'},
+      });
+    }
+    return snapshot('Series');
+  }
+
+  @override
+  Future<TedMetadataSnapshot> metadata(String id) async => snapshot('Series');
 }
 
 void main() {
@@ -952,6 +1023,175 @@ void main() {
     expect(focused(card), true);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('verified scoped cast replaces the series fallback on season and episode pages', (tester) async {
+    final season = SeriesDetailFixture()..scopedCast = true;
+    await mount(
+      tester,
+      TedSeasonDetail(
+        client: season,
+        show: season.data(const TedMediaIdentity('series', 'tt4000000')),
+        season: 1,
+        horizontalInset: 36,
+        onClose: () {},
+        onSidebar: () {},
+        onHeader: () {},
+        onEpisode: (_) {},
+        onPerson: (_, _, _) {},
+      ),
+      season,
+    );
+    expect(find.text('Season performer'), findsOneWidget);
+    expect(find.text('Show performer'), findsNothing);
+    final episode = SeriesDetailFixture()..scopedCast = true;
+    await mount(
+      tester,
+      TedEpisodeDetail(
+        client: episode,
+        initial: episode.data(const TedMediaIdentity('episode', 'tt4000000:1:1')),
+        horizontalInset: 36,
+        onClose: () {},
+        onSidebar: () {},
+        onHeader: () {},
+        onPlay: (_, _, _) async {},
+      ),
+      episode,
+    );
+    expect(find.text('Guest performer'), findsOneWidget);
+    expect(find.text('Show performer'), findsNothing);
+  });
+  testWidgets('series provider menu is admin-only, confirms and reloads the selected structure', (tester) async {
+    final client = SeriesProviderFixture();
+    await mount(
+      tester,
+      TedSeriesDetail(
+        client: client,
+        initial: client.data(const TedMediaIdentity('series', 'tt4000000')),
+        horizontalInset: 36,
+        onClose: () {},
+        onSidebar: () {},
+        onHeader: () {},
+        onSeason: (_) {},
+        onPerson: (_, _, _) {},
+      ),
+      client,
+    );
+
+    final options = find.byTooltip('Series options');
+    final optionsButton = find.descendant(of: options, matching: find.byType(OutlinedButton));
+    final rateButton = find.widgetWithText(OutlinedButton, 'Rate');
+    expect(optionsButton, findsOneWidget);
+    expect(find.descendant(of: optionsButton, matching: find.byType(Text)), findsNothing);
+    expect(tester.getRect(options).left, greaterThan(tester.getRect(rateButton).right));
+    expect(tester.getSize(optionsButton).height, closeTo(tester.getSize(rateButton).height, 0.1));
+    await tester.tap(find.byTooltip('Series options'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Change metadata provider'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Currently using TVDB. Change to TMDB?'), findsOneWidget);
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(client.changes, 0);
+    await tester.tap(find.byTooltip('Series options'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Change metadata provider'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Change provider'));
+    await tester.pumpAndSettle();
+    expect(client.changes, 1);
+    expect(tester.widget<HubSection>(find.byType(HubSection)).hub.items.map((v) => v.index), [7]);
+    final member = SeriesProviderFixture()..admin = false;
+    await mount(
+      tester,
+      TedSeriesDetail(
+        client: member,
+        initial: member.data(const TedMediaIdentity('series', 'tt4000000')),
+        horizontalInset: 36,
+        onClose: () {},
+        onSidebar: () {},
+        onHeader: () {},
+        onSeason: (_) {},
+        onPerson: (_, _, _) {},
+      ),
+      member,
+    );
+    expect(find.byTooltip('Series options'), findsNothing);
+  });
+
+  testWidgets('provider change returns to usable details while root metadata is pending', (tester) async {
+    final client = SeriesProviderFixture()..pendingChange = true;
+    await mount(
+      tester,
+      TedSeriesDetail(
+        client: client,
+        initial: client.data(const TedMediaIdentity('series', 'tt4000000')),
+        horizontalInset: 36,
+        onClose: () {},
+        onSidebar: () {},
+        onHeader: () {},
+        onSeason: (_) {},
+        onPerson: (_, _, _) {},
+      ),
+      client,
+    );
+    await tester.tap(find.byTooltip('Series options'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Change metadata provider'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Change provider'));
+    await tester.pumpAndSettle();
+    expect(client.changes, 1);
+    expect(find.byType(AlertDialog), findsNothing);
+    expect(find.text('Changing metadata provider…'), findsNothing);
+    expect(find.byTooltip('Series options'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(seconds: 1));
+  });
+
+  for (final keep in [false, true]) {
+    testWidgets('provider confirmation ${keep ? 'keeps' : 'removes'} manual overrides including hidden seasons', (
+      tester,
+    ) async {
+      final client = SeriesProviderFixture()..hasOverrides = true;
+      await mount(
+        tester,
+        TedSeriesDetail(
+          client: client,
+          initial: client.data(const TedMediaIdentity('series', 'tt4000000')),
+          horizontalInset: 36,
+          onClose: () {},
+          onSidebar: () {},
+          onHeader: () {},
+          onSeason: (_) {},
+          onPerson: (_, _, _) {},
+        ),
+        client,
+      );
+      await tester.tap(find.byTooltip('Series options'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Change metadata provider'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('including any hidden seasons'), findsOneWidget);
+      expect(
+        tester
+            .widget<RadioListTile<bool>>(
+              find.widgetWithText(RadioListTile<bool>, 'Remove overrides and use the new provider'),
+            )
+            .value,
+        false,
+      );
+      expect(tester.widget<RadioGroup<bool>>(find.byType(RadioGroup<bool>)).groupValue, false);
+      if (keep) {
+        await tester.tap(find.text('Keep my overrides'));
+        await tester.pumpAndSettle();
+      }
+      await tester.tap(find.text('Change provider'));
+      await tester.pumpAndSettle();
+      expect(client.changes, 1);
+      expect(client.keptOverrides, keep);
+      expect(find.byType(AlertDialog), findsNothing);
+    });
+  }
 
   testWidgets('episode description enrichment preserves the show cast even without episode credits', (tester) async {
     final client = EpisodeCastFixture();

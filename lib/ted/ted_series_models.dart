@@ -28,7 +28,7 @@ class TedSeriesWatch {
         final media = TedMediaIdentity.fromJson(item['media'] as Map<String, dynamic>);
         if (media.kind != 'episode' ||
             media.id.split(':').first != series ||
-            (season != null && int.parse(media.id.split(':')[1]) != season) ||
+            (season != null && item['season'] != season) ||
             !ids.add(media) ||
             item['revision'] is! int ||
             (item['revision'] as int) < 0 ||

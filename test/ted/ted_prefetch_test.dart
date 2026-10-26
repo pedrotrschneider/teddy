@@ -52,10 +52,10 @@ void main() {
       now: () => now,
       client: MockClient((r) async {
         if (r.url.path.endsWith('/login')) {
-          return http.Response(jsonEncode(pair(now)), 200, headers: {'x-ted-compatibility-version': '0.2'});
+          return http.Response(jsonEncode(pair(now)), 200, headers: {'x-ted-compatibility-version': '0.3'});
         }
         calls.add(r.url.path);
-        return http.Response('{"ready":true}', 200, headers: {'x-ted-compatibility-version': '0.2'});
+        return http.Response('{"ready":true}', 200, headers: {'x-ted-compatibility-version': '0.3'});
       }),
     );
     addTearDown(auth.close);

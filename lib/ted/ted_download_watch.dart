@@ -66,7 +66,7 @@ class TedDownloadWatch {
     final duration = suppliedDuration > 0 ? suppliedDuration : fallbackDuration;
     final complete =
         event['kind'] == 'complete' ||
-        event['kind'] != 'start' && (duration > 0 ? position * 10 >= duration * 9 : event['natural_eof'] == true);
+        event['kind'] != 'start' && (duration > 0 ? position * 100 >= duration * 95 : event['natural_eof'] == true);
     return TedDownloadWatch(
       media,
       complete || played,

@@ -405,13 +405,13 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
     final account = widget.client.auth.userId;
     final section = _section, query = _query;
     final previousHomeRows = {for (final row in _rows) row.id: row};
-    List<TedHomeRow> retainHomeRows(List<TedHomeRow> rows) => [
+    List<TedHomeRow> retainHomeRows(List<TedHomeRow> rows) => tedDistinctHomeRows([
       for (final row in rows)
         if ((row.loading || row.unavailable) && previousHomeRows.containsKey(row.id))
           TedHomeRow(row.id, previousHomeRows[row.id]!.titles, row.unavailable, row.issues, loading: row.loading)
         else
           row,
-    ];
+    ]);
     var emptyPage = false;
     setState(() {
       _busy = true;

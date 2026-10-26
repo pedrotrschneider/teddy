@@ -18,6 +18,7 @@ import '../utils/app_logger.dart';
 import 'package:http/http.dart' as http;
 
 class TedTitle {
+  final bool canChangeMetadataProvider;
   final bool watchlist;
   final int? userRating;
   final List<TedUserWatch> userWatches;
@@ -50,6 +51,7 @@ class TedTitle {
     this.positionMs,
     this.local, {
     this.watchlist = false,
+    this.canChangeMetadataProvider = false,
     this.userRating,
     this.userWatches = const [],
     this.jointWatches = const [],
@@ -111,6 +113,7 @@ class TedTitle {
     seasons: seasons,
     issues: issues,
     enrichment: enrichment ?? this.enrichment,
+    canChangeMetadataProvider: canChangeMetadataProvider,
     releaseDate: releaseDate,
   );
   factory TedTitle.fromJson(Map<String, dynamic> data) {
@@ -134,6 +137,7 @@ class TedTitle {
         state['position_ms'] as int,
         data['local_available'] as bool,
         watchlist: preferences.watchlist,
+        canChangeMetadataProvider: data['can_change_metadata_provider'] as bool? ?? false,
         userRating: preferences.rating,
         userWatches: ((data['user_watches'] as List?) ?? [])
             .map((e) => TedUserWatch.fromJson(Map<String, dynamic>.from(e as Map)))
@@ -356,6 +360,28 @@ class TedHomeRow {
   }
 }
 
+/// Independent refreshes can mix older cached shelves with newer responses.
+/// New Releases owns an overlapping episode without discarding either snapshot.
+List<TedHomeRow> tedDistinctHomeRows(List<TedHomeRow> rows) {
+  final released = {
+    for (final row in rows.where((row) => row.id == 'new-releases'))
+      for (final title in row.titles.where((title) => title.media.kind == 'episode')) title.media.id,
+  };
+  return List.unmodifiable([
+    for (final row in rows)
+      if (row.id == 'next-up')
+        TedHomeRow(
+          row.id,
+          row.titles.where((title) => title.media.kind != 'episode' || !released.contains(title.media.id)).toList(),
+          row.unavailable,
+          row.issues,
+          loading: row.loading,
+        )
+      else
+        row,
+  ]);
+}
+
 class TedMappedPage {
   final List<TedTitle> titles;
   final String? nextAfter;
@@ -388,11 +414,23 @@ class TedClient {
   }
 
   Future<TedMetadataSnapshot> season(String id, int season) async {
+    return _seasonMetadata(id, season, includeCast: true);
+  }
+
+  /// Poster realization must not fetch every episode's scoped cast.
+  Future<TedMetadataSnapshot> seasonArtwork(String id, int season) async {
+    return _seasonMetadata(id, season, includeCast: false);
+  }
+
+  Future<TedMetadataSnapshot> _seasonMetadata(String id, int season, {required bool includeCast}) async {
     if (!TedMediaIdentity('series', id).valid || season < 0 || season > 9999) {
       throw const TedFailure('invalid_response');
     }
     final result = TedMetadataSnapshot.fromJson(
-      await auth.json('GET', '/api/client/v1/titles/series/${Uri.encodeComponent(id)}/seasons/$season/metadata'),
+      await auth.json(
+        'GET',
+        '/api/client/v1/titles/series/${Uri.encodeComponent(id)}/seasons/$season/metadata${includeCast ? '' : '?cast=0'}',
+      ),
     );
     if (result.type != 'Season') throw const TedFailure('invalid_response');
     return result;
@@ -503,6 +541,36 @@ class TedClient {
     final result = TedMetadataSnapshot.fromJson(await auth.json('GET', '/api/client/v1/metadata/items/$id'));
     if (result.id != id) throw const TedFailure('invalid_response');
     return result;
+  }
+
+  Future<TedSeriesMetadataProvider> seriesMetadataProvider(String id) async {
+    if (!TedMediaIdentity('series', id).valid) throw const TedFailure('invalid_response');
+    return TedSeriesMetadataProvider.fromJson(
+      await auth.json('GET', '/api/client/v1/titles/series/$id/metadata-provider'),
+    );
+  }
+
+  Future<TedMetadataSnapshot> changeSeriesMetadataProvider(
+    String id,
+    String current, {
+    required bool keepOverrides,
+    required String overridesVersion,
+  }) async {
+    if (!TedMediaIdentity('series', id).valid || !const ['Tmdb', 'Tvdb'].contains(current)) {
+      throw const TedFailure('invalid_response');
+    }
+    return TedMetadataSnapshot.fromJson(
+      await auth.json(
+        'POST',
+        '/api/client/v1/titles/series/$id/metadata-provider',
+        body: {
+          'expected_provider': current,
+          'provider': current == 'Tmdb' ? 'Tvdb' : 'Tmdb',
+          'override_action': keepOverrides ? 'keep' : 'remove',
+          'overrides_version': overridesVersion,
+        },
+      ),
+    );
   }
 
   Future<Uint8List?> metadataImage(String id) async {
@@ -743,22 +811,24 @@ class TedClient {
   Future<TedAddonCollection> addons({bool refresh = false}) async =>
       TedAddonCollection.fromJson(await auth.json('GET', '/api/client/v1/addons${refresh ? '?refresh=1' : ''}'));
 
-  Future<TedTitle?> nextForShow(String id) async {
+  Future<TedTitle?> nextForSeries(String id) async {
     if (!TedMediaIdentity('series', id).valid) throw const TedFailure('invalid_response');
-    String? after;
-    final cursors = <String>{};
-    do {
-      final page = await personal('next-up', after: after);
-      if (page.issues.any((issue) => issue.media == null || issue.media!.id.split(':').first == id)) {
-        throw const TedFailure('catalog_unavailable');
-      }
-      final next = page.titles.where((item) => item.media.kind == 'episode' && item.parent?.id == id).firstOrNull;
-      if (next != null) return next;
-      after = page.nextAfter;
-      if (after != null && (!cursors.add(after) || cursors.length > 1000)) {
-        throw const TedFailure('invalid_response');
-      }
-    } while (after != null);
+    for (final row in ['new-releases', 'next-up']) {
+      String? after;
+      final cursors = <String>{};
+      do {
+        final page = await personal(row, after: after);
+        if (page.issues.any((issue) => issue.media == null || issue.media!.id.split(':').first == id)) {
+          throw const TedFailure('catalog_unavailable');
+        }
+        final next = page.titles.where((item) => item.media.kind == 'episode' && item.parent?.id == id).firstOrNull;
+        if (next != null) return next;
+        after = page.nextAfter;
+        if (after != null && (!cursors.add(after) || cursors.length > 1000)) {
+          throw const TedFailure('invalid_response');
+        }
+      } while (after != null);
+    }
     return null;
   }
 
@@ -957,7 +1027,7 @@ class TedClient {
     TedFailure? authFailure;
     // Personal rows are database reads. Discovery must not hold them behind
     // an external provider or turn an individual outage into an empty Home.
-    onUpdate?.call(List.unmodifiable(rows));
+    onUpdate?.call(tedDistinctHomeRows(rows));
     await Future.wait([
       for (var i = 0; i < ids.length; i++)
         () async {
@@ -979,7 +1049,7 @@ class TedClient {
             rows[i] = fresh.issues.isNotEmpty && !rows[i].loading
                 ? TedHomeRow(id, rows[i].titles, false, fresh.issues)
                 : fresh;
-            onUpdate?.call(List.unmodifiable(rows));
+            onUpdate?.call(tedDistinctHomeRows(rows));
             try {
               await homeCache?.write(scope, snapshot);
             } catch (_) {
@@ -989,12 +1059,12 @@ class TedClient {
             if (error is TedFailure && error.code == 'sign_in_required') authFailure = error;
             if (!current()) return;
             rows[i] = TedHomeRow(id, rows[i].titles, true, const []);
-            onUpdate?.call(List.unmodifiable(rows));
+            onUpdate?.call(tedDistinctHomeRows(rows));
           }
         }(),
     ]);
     if (authFailure != null) throw authFailure!;
-    return List.unmodifiable(rows);
+    return tedDistinctHomeRows(rows);
   }
 
   Future<void> setWatched(TedTitle title, bool watched) async {
