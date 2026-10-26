@@ -10,12 +10,22 @@ import '../widgets/setting_tile.dart';
 import '../widgets/settings_section.dart';
 import 'ted_version.dart';
 import 'ted_app_shutdown.dart';
+import 'ted_compatibility.dart';
 import 'teddy_updates.dart';
 import 'teddy_update_installer.dart';
 
 class TeddyUpdateSettings extends StatefulWidget {
   final String? downloadRoot;
-  const TeddyUpdateSettings({super.key, this.downloadRoot});
+  final TedCompatibility? requiredCompatibility;
+  final String currentVersion;
+  final TeddyUpdateCheck checkForUpdates;
+  const TeddyUpdateSettings({
+    super.key,
+    this.downloadRoot,
+    this.requiredCompatibility,
+    this.currentVersion = teddyReleaseVersion,
+    this.checkForUpdates = TeddyUpdates.check,
+  });
   @override
   State<TeddyUpdateSettings> createState() => _TeddyUpdateSettingsState();
 }
@@ -70,17 +80,21 @@ class _TeddyUpdateSettingsState extends State<TeddyUpdateSettings> {
       _status = 'Checking for updates…';
     });
     try {
-      final update = await TeddyUpdates.check(
-        teddyReleaseVersion,
+      final update = await widget.checkForUpdates(
+        widget.currentVersion,
         _settings.read(SettingsService.teddyUpdateChannel) == 'rc',
+        requiredCompatibility: widget.requiredCompatibility,
       );
       if (mounted && generation == _generation) {
         setState(() {
           _update = update;
-          _status = TeddyVersion.parse(teddyReleaseVersion) == null
+          _status = TeddyVersion.parse(widget.currentVersion) == null
               ? 'Development build: install an official release to enable updates.'
               : update == null
-              ? 'You’re up to date for this compatibility version.'
+              ? widget.requiredCompatibility == null
+                    ? 'You’re up to date for this compatibility version.'
+                    : 'No newer Teddy ${widget.requiredCompatibility!.releaseFamily} release is available on this channel. '
+                          'Try another channel or update TED to match your app.'
               : 'Version ${update.version} is available.';
         });
       }
@@ -169,7 +183,11 @@ class _TeddyUpdateSettingsState extends State<TeddyUpdateSettings> {
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: [
-      const SettingsSectionHeader('Look for Updates'),
+      SettingsSectionHeader(
+        widget.requiredCompatibility == null
+            ? 'Look for Updates'
+            : 'Update to Teddy ${widget.requiredCompatibility!.releaseFamily}',
+      ),
       SettingsGroup(
         children: [
           if (!_installing)

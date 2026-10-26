@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'ted_compatibility.dart';
 
 /// Only our published numeric stable/rc releases participate in update checks.
 class TeddyVersion implements Comparable<TeddyVersion> {
@@ -42,9 +43,17 @@ class TeddyUpdate {
   const TeddyUpdate(this.version, this.releaseUrl, this.assets);
 }
 
+typedef TeddyUpdateCheck =
+    Future<TeddyUpdate?> Function(String current, bool candidates, {TedCompatibility? requiredCompatibility});
+
 class TeddyUpdates {
   static const repository = 'pedrotrschneider/teddy';
-  static TeddyUpdate? select(List<dynamic> releases, String current, bool candidates) {
+  static TeddyUpdate? select(
+    List<dynamic> releases,
+    String current,
+    bool candidates, {
+    TedCompatibility? requiredCompatibility,
+  }) {
     final installed = TeddyVersion.parse(current);
     if (installed == null) return null; // Unversioned development builds are manual.
     TeddyUpdate? best;
@@ -52,8 +61,8 @@ class TeddyUpdates {
       if (item is! Map || item['draft'] != false || item['tag_name'] is! String) continue;
       final version = TeddyVersion.parse(item['tag_name']);
       if (version == null ||
-          version.major != installed.major ||
-          (installed.major == 0 && version.minor != installed.minor) ||
+          !(requiredCompatibility?.accepts(version.major, version.minor) ??
+              (version.major == installed.major && (installed.major != 0 || version.minor == installed.minor))) ||
           (!candidates && (version.rc != null || item['prerelease'] != false)) ||
           version.compareTo(installed) <= 0 ||
           (best != null && version.compareTo(best.version) <= 0)) {
@@ -82,7 +91,7 @@ class TeddyUpdates {
     return best;
   }
 
-  static Future<TeddyUpdate?> check(String current, bool candidates) async {
+  static Future<TeddyUpdate?> check(String current, bool candidates, {TedCompatibility? requiredCompatibility}) async {
     final client = http.Client();
     try {
       final releases = <dynamic>[];
@@ -102,7 +111,7 @@ class TeddyUpdates {
           throw const FormatException('Invalid release response');
         }
       }
-      return select(releases, current, candidates);
+      return select(releases, current, candidates, requiredCompatibility: requiredCompatibility);
     } finally {
       client.close();
     }

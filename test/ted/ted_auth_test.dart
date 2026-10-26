@@ -63,6 +63,8 @@ void main() {
       throwsA(isA<TedFailure>().having((e) => e.code, 'code', 'incompatible_version')),
     );
     expect(store.saved, isNull);
+    expect(auth.compatibilityIssue.value?.server, Uri.parse('https://ted.example/'));
+    expect(auth.compatibilityIssue.value?.requiredVersion.toString(), '2');
   });
 
   test('major mismatch rejects login without saving credentials', () async {
@@ -81,6 +83,53 @@ void main() {
     );
     expect(store.saved, isNull);
     expect(auth.signedIn, isFalse);
+  });
+
+  test('refresh incompatibility retains its update target and uncertain-rotation tombstone', () async {
+    var now = DateTime.utc(2026, 10, 10);
+    final store = MemoryStore();
+    final auth = TedAuth(
+      store: store,
+      now: () => now,
+      client: MockClient((request) async {
+        if (request.url.path.endsWith('/login')) return response(pair(now));
+        expect(request.url.path.endsWith('/refresh'), true);
+        expect(store.saved!.refreshPending, true);
+        return http.Response('{"code":"incompatible_version"}', 426, headers: {'x-ted-compatibility-version': '0.4'});
+      }),
+    );
+    addTearDown(auth.close);
+    await auth.login('https://ted.example', 'fixture', '', 'test');
+    now = now.add(const Duration(minutes: 11));
+    await expectLater(auth.headers(), signInRequired);
+    expect(auth.compatibilityIssue.value?.requiredVersion.toString(), '0.4');
+    expect(store.saved!.refreshPending, true);
+    expect(store.saved!.offlineAllowed, true);
+    expect(auth.signedIn, false);
+  });
+
+  test('late incompatible response from a closed connection cannot open an update prompt', () async {
+    final entered = Completer<void>();
+    final reply = Completer<http.Response>();
+    final auth = TedAuth(
+      store: MemoryStore(),
+      client: MockClient((_) {
+        entered.complete();
+        return reply.future;
+      }),
+    );
+    var notifications = 0;
+    auth.compatibilityIssue.addListener(() => notifications++);
+    final pending = expectLater(auth.login('https://ted.example', 'fixture', '', 'test'), signInRequired);
+    await entered.future;
+    auth.close();
+    reply.complete(
+      http.Response('{"code":"incompatible_version"}', 426, headers: {'x-ted-compatibility-version': '0.4'}),
+    );
+    await pending;
+    expect(notifications, 0);
+    expect(auth.compatibilityIssue.value, isNull);
+    auth.close();
   });
 
   test('waiting requests rotate once and save the whole replacement before using it', () async {

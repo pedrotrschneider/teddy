@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 import '../utils/app_logger.dart';
 import 'ted_credential_store.dart';
+import 'ted_compatibility.dart';
 import 'ted_models.dart';
 import 'ted_version.dart';
 
@@ -23,6 +25,8 @@ class TedAuth {
   bool _closed = false;
   int _epoch = 0;
   String? _deviceId;
+  final _compatibilityIssue = ValueNotifier<TedCompatibilityIssue?>(null);
+  ValueListenable<TedCompatibilityIssue?> get compatibilityIssue => _compatibilityIssue;
 
   /// This identity permits access to already downloaded device files only.
   /// It is never a token or authorization for a TED request.
@@ -62,6 +66,7 @@ class TedAuth {
 
   Future<bool> restore() => _exclusive(() async {
     _epoch++;
+    _compatibilityIssue.value = null;
     _credentials = null;
     _offlineIdentity = null;
     final value = await store.read();
@@ -80,6 +85,7 @@ class TedAuth {
 
   Future<void> login(String server, String username, String password, String deviceName) => _exclusive(() async {
     _epoch++;
+    _compatibilityIssue.value = null;
     _credentials = null;
     _offlineIdentity = null;
     final base = tedServerUri(server);
@@ -91,7 +97,7 @@ class TedAuth {
       body: {'username': username, 'password': password, 'device_id': device, 'device_name': deviceName},
     );
     if (response.statusCode == 401) throw const TedFailure('invalid_credentials');
-    _requireSuccess(response);
+    _requireSuccess(response, base);
     final value = TedCredentials(base, device, TedTokens.fromJson(_object(response)));
     try {
       await store.save(value);
@@ -118,7 +124,7 @@ class TedAuth {
         '/api/client/v1/auth/refresh',
         body: {'refresh_token': old.tokens.refresh},
       );
-      _requireSuccess(response);
+      _requireSuccess(response, old.server);
       final tokens = TedTokens.fromJson(_object(response));
       if (tokens.familyId != old.tokens.familyId ||
           tokens.userId != old.tokens.userId ||
@@ -238,12 +244,13 @@ class TedAuth {
         throw const TedFailure('sign_in_required');
       }
     }
-    _requireSuccess(response);
+    _requireSuccess(response, base);
     return response;
   }
 
   Future<void> logout({bool all = false}) => _exclusive(() async {
     _epoch++;
+    _compatibilityIssue.value = null;
     final old = _credentials ?? _offlineIdentity;
     _credentials = null;
     _offlineIdentity = null;
@@ -261,7 +268,7 @@ class TedAuth {
           '/api/client/v1/auth/logout${all ? '-all' : ''}',
           headers: {'Authorization': 'Bearer ${old.tokens.access}'},
         );
-        if (response.statusCode != 401) _requireSuccess(response);
+        if (response.statusCode != 401) _requireSuccess(response, old.server, reportCompatibility: false);
       }
     } finally {
       await store.clear();
@@ -352,12 +359,18 @@ class TedAuth {
     }
   }
 
-  void _requireSuccess(http.Response response) {
+  void _requireSuccess(http.Response response, Uri base, {bool reportCompatibility = true}) {
+    if (_closed) throw const TedFailure('sign_in_required');
     final serverContract = response.headers['x-ted-compatibility-version'];
-    if (serverContract != teddyCompatibilityVersion) throw const TedFailure('incompatible_version');
+    if (serverContract != teddyCompatibilityVersion || response.statusCode == 426) {
+      if (reportCompatibility) {
+        _compatibilityIssue.value = TedCompatibilityIssue(base, TedCompatibility.parse(serverContract));
+      }
+      throw const TedFailure('incompatible_version');
+    }
+    if (reportCompatibility) _compatibilityIssue.value = null;
     if (response.statusCode >= 200 && response.statusCode < 300) return;
     if (response.statusCode == 401) throw const TedFailure('sign_in_required');
-    if (response.statusCode == 426) throw const TedFailure('incompatible_version');
     String? code;
     try {
       code = _object(response)['code'] as String?;
@@ -418,9 +431,12 @@ class TedAuth {
   }
 
   void close() {
+    if (_closed) return;
     _epoch++;
     _closed = true;
     _credentials = null;
+    _compatibilityIssue.value = null;
+    _compatibilityIssue.dispose();
     client.close();
   }
 }

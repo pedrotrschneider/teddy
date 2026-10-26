@@ -26,6 +26,7 @@ import 'utils/platform_detector.dart';
 import 'utils/app_logger.dart';
 import 'widgets/settings_builder.dart';
 import 'ted/ted_auth.dart';
+import 'ted/ted_compatibility_prompt.dart';
 import 'ted/ted_back_scope.dart';
 import 'focus/focusable_text_field.dart';
 import 'ted/ted_client.dart';
@@ -701,18 +702,20 @@ class _TeddyHomeState extends State<TeddyHome> {
 
   @override
   Widget build(BuildContext context) {
-    final page = TedUserAvatarScope(client: _client, child: _buildPage(context));
-    if (_showProfiles || _auth.signedIn) return page;
-    return TedBackScope(
-      onBack: _backToProfiles,
-      child: Focus(
-        canRequestFocus: false,
-        onKeyEvent: (_, event) => ModalRoute.of(context)?.isCurrent == true
-            ? handleBackKeyAction(event, _backToProfiles)
-            : KeyEventResult.ignored,
-        child: page,
-      ),
-    );
+    Widget page = TedUserAvatarScope(client: _client, child: _buildPage(context));
+    if (!_showProfiles && !_auth.signedIn) {
+      page = TedBackScope(
+        onBack: _backToProfiles,
+        child: Focus(
+          canRequestFocus: false,
+          onKeyEvent: (_, event) => ModalRoute.of(context)?.isCurrent == true
+              ? handleBackKeyAction(event, _backToProfiles)
+              : KeyEventResult.ignored,
+          child: page,
+        ),
+      );
+    }
+    return TedCompatibilityPrompt(auth: _auth, downloadRoot: widget.downloadRoot.path, child: page);
   }
 
   Widget _buildPage(BuildContext context) => Scaffold(

@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:archive/archive_io.dart';
 import 'package:path/path.dart' as p;
 import 'package:plezy/ted/teddy_updates.dart';
+import 'package:plezy/ted/ted_compatibility.dart';
 import 'package:plezy/ted/teddy_update_installer.dart';
 
 Map<String, dynamic> release(String version, {bool draft = false}) => {
@@ -38,6 +39,37 @@ void main() {
     final wrong = release('0.1.9');
     (wrong['assets'] as List).single['browser_download_url'] = 'https://evil.example/app.zip';
     expect(TeddyUpdates.select([wrong], '0.1.8', false), isNull);
+  });
+  test('only the incompatibility action can select a newer server-required family', () {
+    final items = [
+      release('0.2.8'),
+      release('0.3.0'),
+      release('0.3.2'),
+      release('0.3.3-rc1'),
+      release('0.3.4', draft: true),
+      release('0.4.0'),
+      release('1.0.0'),
+    ];
+    final target = TedCompatibility.parse('0.3')!;
+    expect(TeddyUpdates.select(items, '0.2.7', false)?.version.toString(), '0.2.8');
+    expect(TeddyUpdates.select(items, '0.2.7', false, requiredCompatibility: target)?.version.toString(), '0.3.2');
+    expect(TeddyUpdates.select(items, '0.2.7', true, requiredCompatibility: target)?.version.toString(), '0.3.3-rc1');
+    expect(TeddyUpdates.select(items, '0.4.1', true, requiredCompatibility: target), isNull);
+    expect(TeddyUpdates.select(items, '0.3.0-dev', true, requiredCompatibility: target), isNull);
+    final untrusted = release('0.3.9');
+    (untrusted['assets'] as List).single['browser_download_url'] =
+        'https://github.com/another/repo/releases/download/v0.3.9/Teddy.zip';
+    expect(TeddyUpdates.select([untrusted], '0.2.7', false, requiredCompatibility: target), isNull);
+  });
+  test('required compatibility is strict and uses major-only families after alpha', () {
+    for (final value in [null, '', '0', '0.3.0', 'v0.3', '0.03', '1.2', 'https://example.com', '9' * 25]) {
+      expect(TedCompatibility.parse(value), isNull, reason: '$value');
+    }
+    final target = TedCompatibility.parse('2')!;
+    expect(target.releaseFamily, '2.x');
+    final items = [release('1.9.9'), release('2.0.0'), release('2.7.1'), release('3.0.0')];
+    expect(TeddyUpdates.select(items, '1.0.0', false)?.version.toString(), '1.9.9');
+    expect(TeddyUpdates.select(items, '1.0.0', false, requiredCompatibility: target)?.version.toString(), '2.7.1');
   });
   test('platform package and exact checksum matching', () {
     expect(teddyUpdateAssetSuffix('linux', Abi.linuxArm64), 'linux-arm64.tar.gz');
