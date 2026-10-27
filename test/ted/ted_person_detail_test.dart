@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plezy/focus/input_mode_tracker.dart';
+import 'package:plezy/focus/locked_hub_controller.dart';
 import 'package:plezy/services/settings_service.dart';
 import 'package:plezy/ted/ted_browse_screen.dart';
 import 'package:plezy/ted/ted_client.dart';
@@ -160,7 +161,7 @@ void main() {
     await tester.pump();
   }
 
-  testWidgets('person biography and viewing split retain cards beneath a taller desktop/TV banner', (tester) async {
+  testWidgets('person filmography matches standard media poster sizing beneath its desktop/TV banner', (tester) async {
     for (final tv in [false, true]) {
       final client = PersonFixture();
       await mount(tester, client, tv: tv);
@@ -191,10 +192,55 @@ void main() {
       expect(client.details, isEmpty);
       expect(client.peopleReads, 1);
       expect(tester.getRect(find.text('Other movie')).bottom, greaterThan(950));
-      final otherCard = find.ancestor(of: find.text('Other movie'), matching: find.byType(MediaCard));
-      expect(tester.getRect(otherCard).top, lessThan(950));
-      final card = find.byType(MediaCard).first;
-      expect(tester.getSize(card).width, lessThanOrEqualTo(180));
+      final personCardWidth = tester.getSize(find.byType(MediaCard).first).width;
+      // Render an ordinary Home-style shelf at the same viewport width. Its
+      // real card geometry should match, including the TV shelf sizing policy.
+      await tester.pumpWidget(
+        InputModeTracker(
+          child: MaterialApp(
+            theme: monoTheme(dark: true),
+            home: Scaffold(
+              body: SingleChildScrollView(
+                child: HubSection(
+                  hub: rows.first.hub,
+                  focusMemory: HubFocusMemory(),
+                  icon: Icons.movie_outlined,
+                  autoScroll: false,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(personCardWidth, closeTo(tester.getSize(find.byType(MediaCard).first).width, .01));
+      expect(tester.takeException(), isNull);
+    }
+  });
+
+  testWidgets('full-size first-row posters stay visible when returning from lower rows on short screens', (
+    tester,
+  ) async {
+    for (final tv in [false, true]) {
+      final client = PersonFixture();
+      await mount(tester, client, tv: tv, size: const Size(1100, 600));
+      await tester.pumpAndSettle();
+      final rows = find.byType(HubSection);
+      final first = tester.state<HubSectionState>(rows.first);
+      first.requestFocusAt(0);
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pumpAndSettle();
+      final row = tester.getRect(rows.first);
+      expect(row.top, greaterThanOrEqualTo(0));
+      expect(row.bottom, lessThanOrEqualTo(600));
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
+      await tester.pumpAndSettle();
+      expect(first.hasFocus, true);
+      final returned = tester.getRect(rows.first);
+      expect(returned.top, greaterThanOrEqualTo(0));
+      expect(returned.bottom, lessThanOrEqualTo(600));
       expect(tester.takeException(), isNull);
     }
   });
@@ -287,7 +333,7 @@ void main() {
       expect(tester.takeException(), isNull);
     }
   });
-  testWidgets('empty Watched is hidden and Other appearances becomes the return-to-top row', (tester) async {
+  testWidgets('empty Watched is hidden and Other appearances becomes the row with bounded hero reveal', (tester) async {
     final client = PersonFixture()..noViewed = true;
     await mount(tester, client, tv: true, size: const Size(1292, 600));
     await tester.pumpAndSettle();
@@ -304,7 +350,9 @@ void main() {
     await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
     await tester.pumpAndSettle();
-    expect(scroll.offset, closeTo(0, .01));
+    expect(scroll.offset, greaterThan(0));
+    expect(tester.getRect(find.byType(HubSection)).bottom, lessThanOrEqualTo(600));
+    expect(tester.getRect(find.byKey(const ValueKey('person-banner'))).bottom, greaterThan(0));
     expect(FocusManager.instance.primaryFocus?.debugLabel, contains('-other'));
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
     await tester.pumpAndSettle();

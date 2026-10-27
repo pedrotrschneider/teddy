@@ -9,7 +9,6 @@ import '../media/media_item.dart';
 import '../media/media_kind.dart';
 import '../utils/media_image_helper.dart';
 import '../utils/layout_constants.dart';
-import '../utils/platform_detector.dart';
 import '../widgets/cycling_media_backdrop.dart';
 import '../widgets/hub_section.dart';
 import 'ted_client.dart';
@@ -223,14 +222,30 @@ class TedPersonDetailState extends State<TedPersonDetail> {
           ModalRoute.of(context)?.isCurrent == false) {
         return;
       }
-      if ((_scroll.offset - _scroll.position.minScrollExtent).abs() < 1) return;
-      unawaited(
-        _scroll.animateTo(
-          _scroll.position.minScrollExtent,
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOutCubic,
-        ),
+      final first = _watched.isNotEmpty ? _watchedKey : _otherKey;
+      final row = first.currentContext;
+      if (row == null || first.currentState?.hasFocus != true) return;
+      final shelf = row.findRenderObject();
+      final viewport = Scrollable.maybeOf(row)?.context.findRenderObject();
+      if (shelf is! RenderBox ||
+          viewport is! RenderBox ||
+          !shelf.attached ||
+          !viewport.attached ||
+          !shelf.hasSize ||
+          !viewport.hasSize) {
+        return;
+      }
+      final position = _scroll.position;
+      if (!position.hasContentDimensions) return;
+      // Standard media posters may need more vertical space than the old
+      // compact cards. Reveal the hero only as far as the full row can fit.
+      final bottom = shelf.localToGlobal(Offset(0, shelf.size.height), ancestor: viewport).dy;
+      final target = (position.pixels + bottom - viewport.size.height + 8).clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
       );
+      if ((_scroll.offset - target).abs() < 1) return;
+      unawaited(_scroll.animateTo(target, duration: const Duration(milliseconds: 200), curve: Curves.easeOutCubic));
     });
   }
 
@@ -308,89 +323,83 @@ class TedPersonDetailState extends State<TedPersonDetail> {
       'joint_watches': entry.jointWatches.map((w) => w.toJson()).toList(),
     },
   );
-  Widget _row(bool watched, double maxWidth) {
+  Widget _row(bool watched) {
     final entries = watched ? _watched : _other;
     final firstRow = watched || _watched.isEmpty;
-    return Padding(
-      padding: EdgeInsets.symmetric(horizontal: (widget.horizontalInset - 3).clamp(0, double.infinity)),
-      child: HubSection(
-        key: watched ? _watchedKey : _otherKey,
-        showUnviewedCount: watched,
-        hub: MediaHub(
-          id: 'person-${widget.person.id}-${watched ? 'watched' : 'other'}',
-          title: watched ? 'Watched' : 'Other appearances',
-          type: 'mixed',
-          items: entries.map(_item).toList(),
-          serverId: TedPresentation(widget.client).scope,
-        ),
-        focusMemory: _memory,
-        icon: watched ? Icons.history : Icons.movie_outlined,
-        inset: true,
-        cardSizing: HubCardSizing.grid,
-        maxCardWidth: maxWidth,
-        autoScroll: !firstRow,
-        focusScrollAlignment: watched ? .45 : 1,
-        onFocusedItemChanged: (_) {
-          _lastLane = watched ? 'watched' : 'other';
-          if (firstRow) _revealFirstRow();
-        },
-        onItemTap: (item) => unawaited(_open(entries.firstWhere((v) => v.id == item.id))),
-        onItemLongPress: (_) {},
-        onNavigateToSidebar: widget.onSidebar,
-        onBack: widget.onClose,
-        onVerticalNavigation: (up) {
-          if (up) {
-            if (watched || _watched.isEmpty) {
-              _focusBiography();
-            } else {
-              _focusRow(true);
-            }
-          } else if (watched && _other.isNotEmpty) {
-            _focusRow(false);
+    return HubSection(
+      key: watched ? _watchedKey : _otherKey,
+      showUnviewedCount: watched,
+      hub: MediaHub(
+        id: 'person-${widget.person.id}-${watched ? 'watched' : 'other'}',
+        title: watched ? 'Watched' : 'Other appearances',
+        type: 'mixed',
+        items: entries.map(_item).toList(),
+        serverId: TedPresentation(widget.client).scope,
+      ),
+      focusMemory: _memory,
+      icon: watched ? Icons.history : Icons.movie_outlined,
+      autoScroll: !firstRow,
+      focusScrollAlignment: watched ? .45 : 1,
+      onFocusedItemChanged: (_) {
+        _lastLane = watched ? 'watched' : 'other';
+        if (firstRow) _revealFirstRow();
+      },
+      onItemTap: (item) => unawaited(_open(entries.firstWhere((v) => v.id == item.id))),
+      onItemLongPress: (_) {},
+      onNavigateToSidebar: widget.onSidebar,
+      onBack: widget.onClose,
+      onVerticalNavigation: (up) {
+        if (up) {
+          if (watched || _watched.isEmpty) {
+            _focusBiography();
+          } else {
+            _focusRow(true);
           }
-          return true;
-        },
-        captionBuilder: (context, item) {
-          final entry = entries.firstWhere((v) => v.id == item.id);
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                entry.name,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13, height: 1.1),
-              ),
-              Text(
-                tedEnglishCharacterNames(entry.roles),
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 11, height: 1.1),
-              ),
-            ],
-          );
-        },
-        artworkBuilder: (context, item, width, height) {
-          final entry = entries.firstWhere((v) => v.id == item.id);
-          final primary = entry.images.where((v) => v.type == 'Primary').firstOrNull;
-          final character = entry.images.where((v) => v.type == 'Thumb').firstOrNull;
-          return _PrivateArtwork(
+        } else if (watched && _other.isNotEmpty) {
+          _focusRow(false);
+        }
+        return true;
+      },
+      captionBuilder: (context, item) {
+        final entry = entries.firstWhere((v) => v.id == item.id);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              entry.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13, height: 1.1),
+            ),
+            Text(
+              tedEnglishCharacterNames(entry.roles),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(fontSize: 11, height: 1.1),
+            ),
+          ],
+        );
+      },
+      artworkBuilder: (context, item, width, height) {
+        final entry = entries.firstWhere((v) => v.id == item.id);
+        final primary = entry.images.where((v) => v.type == 'Primary').firstOrNull;
+        final character = entry.images.where((v) => v.type == 'Thumb').firstOrNull;
+        return _PrivateArtwork(
+          artwork: _artwork,
+          id: character?.id ?? primary?.id,
+          width: width,
+          height: height,
+          label: entry.name,
+          fallback: _PrivateArtwork(
             artwork: _artwork,
-            id: character?.id ?? primary?.id,
+            id: character == null ? null : primary?.id,
             width: width,
             height: height,
             label: entry.name,
-            fallback: _PrivateArtwork(
-              artwork: _artwork,
-              id: character == null ? null : primary?.id,
-              width: width,
-              height: height,
-              label: entry.name,
-              fallback: Center(child: Icon(entry.type == 'Movie' ? Icons.movie_outlined : Icons.tv, size: 36)),
-            ),
-          );
-        },
-      ),
+            fallback: Center(child: Icon(entry.type == 'Movie' ? Icons.movie_outlined : Icons.tv, size: 36)),
+          ),
+        );
+      },
     );
   }
 
@@ -599,10 +608,6 @@ class TedPersonDetailState extends State<TedPersonDetail> {
       final narrow = box.maxWidth < 600;
       final compactHeight = narrow ? 340.0 : (box.maxHeight * .28).clamp(230.0, 310.0);
       final bannerHeight = compactHeight * 1.5;
-      // Retain the existing cards while giving the banner more space. The
-      // second shelf can extend below the viewport and scroll into view.
-      final rowBudget = (box.maxHeight - compactHeight - 40) / 2;
-      final width = ((rowBudget - (PlatformDetector.isTV() ? 106 : 76)) / 1.5 + 6).clamp(100.0, 180.0);
       return SingleChildScrollView(
         controller: _scroll,
         child: Column(
@@ -627,10 +632,10 @@ class TedPersonDetailState extends State<TedPersonDetail> {
                 ),
               ),
             const SizedBox(height: 8),
-            if (_watched.isNotEmpty) _row(true, width),
+            if (_watched.isNotEmpty) _row(true),
             if (_watched.isNotEmpty && _other.isNotEmpty)
               const SizedBox(height: 12 * ContentLayoutConstants.rowGapScale),
-            if (_other.isNotEmpty) _row(false, width),
+            if (_other.isNotEmpty) _row(false),
             if (_entries.any((v) => v.viewed == null))
               Padding(
                 padding: EdgeInsets.symmetric(horizontal: widget.horizontalInset, vertical: 4),

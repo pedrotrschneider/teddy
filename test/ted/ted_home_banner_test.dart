@@ -229,13 +229,19 @@ void main() {
     cleanup(tester, client);
     final entry = TedTitle.fromJson({
       ...titleData(),
-      'metadata': {'name': 'Cinemeta title', 'description': 'Cinemeta overview'},
+      'metadata': {
+        'name': 'Cinemeta title',
+        'description': 'Cinemeta overview',
+        'runtime': '108 min',
+        'genres': ['Drama', 'Mystery'],
+      },
       'enrichment': metadataData(status: 'queued', images: true),
     });
     await mount(tester, client, [entry], catalogPreview: true, enrichMetadata: false);
     await tester.pump(const Duration(seconds: 3));
     expect(find.text('Cinemeta title'), findsOneWidget);
     expect(find.text('Cinemeta overview'), findsOneWidget);
+    expect(find.text('108 min • Drama • Mystery'), findsOneWidget);
     expect(find.text('Provider title'), findsNothing);
     expect(client.requests, isEmpty);
     expect(client.polls, 0);
@@ -249,6 +255,41 @@ void main() {
     expect(find.text('Provider title'), findsOneWidget);
     expect(client.polls, 1);
     expect(client.imageRequests, 2);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('movie and series banners show runtime and genres without empty facts or narrow layout overflow', (
+    tester,
+  ) async {
+    final client = BannerFixture();
+    cleanup(tester, client);
+    for (final kind in ['movie', 'series']) {
+      final entry = TedTitle.fromJson({
+        ...titleData(kind: kind),
+        'metadata': {
+          'name': 'Example title',
+          'runtime': kind == 'movie' ? '108 min' : '45 min',
+          'genres': ['Drama', '', 'Mystery', 'Drama'],
+        },
+        'enrichment': {
+          ...metadataData(),
+          'item': <String, dynamic>{...metadataData()['item'], 'Type': kind == 'movie' ? 'Movie' : 'Series'},
+        },
+      });
+      for (final size in const [Size(1200, 900), Size(320, 640), Size(740, 390)]) {
+        await mount(tester, client, [entry], size: size, catalogPreview: true);
+        await tester.pumpAndSettle();
+        final facts = find.text('${kind == 'movie' ? '108 min' : '45 min per episode'} • Drama • Mystery');
+        expect(facts, findsOneWidget);
+        expect(tester.getRect(facts).top, greaterThanOrEqualTo(0));
+        expect(tester.takeException(), isNull);
+      }
+    }
+    expect(client.requests, isEmpty, reason: 'Existing summaries and enrichment already contain the display data.');
+    await mount(tester, client, [bannerTitle(1)], catalogPreview: true);
+    await tester.pumpAndSettle();
+    expect(find.textContaining(' per episode'), findsNothing);
+    expect(find.text(' • '), findsNothing);
     expect(tester.takeException(), isNull);
   });
 

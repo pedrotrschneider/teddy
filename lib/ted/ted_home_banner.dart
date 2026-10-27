@@ -584,6 +584,11 @@ class TedHomeBannerState extends State<TedHomeBanner> with WidgetsBindingObserve
     final year = slide.metadata?.year?.toString() ?? visual.year;
     final rating = slide.metadata?.rating ?? visual.rating;
     final description = widget.descriptionOverride ?? slide.description;
+    final runtime = visual.runtime.trim();
+    final facts = [
+      if (runtime.isNotEmpty) visual.media.kind == 'series' ? '$runtime per episode' : runtime,
+      ...visual.genres.map((genre) => genre.trim()).where((genre) => genre.isNotEmpty).toSet(),
+    ].join(' • ');
     return ConstrainedBox(
       constraints: const BoxConstraints(maxWidth: 740),
       child: Column(
@@ -633,6 +638,15 @@ class TedHomeBannerState extends State<TedHomeBanner> with WidgetsBindingObserve
             overflow: TextOverflow.ellipsis,
             style: theme.textTheme.titleMedium?.copyWith(color: foreground),
           ),
+          if (facts.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              facts,
+              maxLines: compact ? 1 : 2,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodyMedium?.copyWith(color: foreground.withValues(alpha: .85)),
+            ),
+          ],
           if (title.media.kind == 'episode') ...[
             SizedBox(height: compact ? 8 : 12),
             Text(
