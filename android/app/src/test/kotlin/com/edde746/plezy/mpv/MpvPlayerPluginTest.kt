@@ -775,6 +775,64 @@ class MpvPlayerPluginTest {
   }
 
   @Test
+  fun slowHdrDisposalRetainsSurfacesAndDisplayModeUntilNativeCloseReturns() {
+    val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+    activity.setContentView(FrameLayout(activity))
+    val content = activity.findViewById<ViewGroup>(android.R.id.content)
+    val container = FrameLayout(activity)
+    content.addView(container)
+    val entered = CountDownLatch(1)
+    val release = CountDownLatch(1)
+    val core = MpvPlayerCore(activity, nativeCloser = {
+      entered.countDown()
+      check(release.await(5, TimeUnit.SECONDS))
+    })
+    setCoreField(core, "surfaceContainer", container)
+    setCoreField(core, "frameRateManager", FrameRateManager(activity, Handler(Looper.getMainLooper())))
+    setBoolean(core, "hdrDisplayActive", true)
+    activity.window.attributes = activity.window.attributes.apply { preferredDisplayModeId = 4 }
+    var completed = 0
+    try {
+      core.dispose { completed++ }
+      assertTrue(entered.await(1, TimeUnit.SECONDS))
+      core.dispose { completed++ }
+      // Outlive the old fixed HDR timer while JNI still owns the surfaces.
+      shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(2))
+      assertEquals(4, preferredModeId(activity))
+      assertNotNull(container.parent)
+      assertEquals(0, completed)
+
+      release.countDown()
+      awaitCondition { completed == 2 }
+      assertNull(container.parent)
+      assertEquals(4, preferredModeId(activity))
+      shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(500))
+      assertEquals(0, preferredModeId(activity))
+    } finally {
+      release.countDown()
+    }
+  }
+
+  @Test
+  fun failedNativeCloseKeepsTheHdrSurfacesAndDoesNotRestoreTheDisplay() {
+    val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+    activity.setContentView(FrameLayout(activity))
+    val container = FrameLayout(activity)
+    activity.findViewById<ViewGroup>(android.R.id.content).addView(container)
+    val core = MpvPlayerCore(activity, nativeCloser = { throw IllegalStateException("decoder still active") })
+    setCoreField(core, "surfaceContainer", container)
+    setCoreField(core, "frameRateManager", FrameRateManager(activity, Handler(Looper.getMainLooper())))
+    setBoolean(core, "hdrDisplayActive", true)
+    activity.window.attributes = activity.window.attributes.apply { preferredDisplayModeId = 4 }
+    var completed = false
+    core.dispose { completed = true }
+    awaitCondition { completed }
+    shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(2))
+    assertNotNull(container.parent)
+    assertEquals(4, preferredModeId(activity))
+  }
+
+  @Test
   fun configDetachThenEngineDetachTearsDownVideoCoreAndPendingInitOnce() {
     val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
     activity.setContentView(FrameLayout(activity))

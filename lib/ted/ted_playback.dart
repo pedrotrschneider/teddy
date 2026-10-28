@@ -12,9 +12,8 @@ import 'ted_models.dart';
 import 'ted_local_store.dart';
 import 'ted_track_languages.dart';
 
-/// Minimal T2 adapter for Plezy's actual platform player. Source renewal always
-/// reopens this session at its observed offset, never creates another release or
-/// invents a new start/completion report. Full offline integration belongs to T5.
+/// Coordinates native controls, durable live/offline viewing and bounded
+/// recovery of the same pinned playback session, without changing its source.
 class TedPlayback extends ChangeNotifier {
   final TedClient client;
   final Player player;
@@ -34,6 +33,7 @@ class TedPlayback extends ChangeNotifier {
   bool _recoveringOpen = false;
   int _automaticRestarts = 0;
   Future<void>? _stop;
+  Future<void>? _close;
   Timer? _progress;
   Timer? _landingWatchdog;
   Timer? _pendingEnd;
@@ -49,6 +49,9 @@ class TedPlayback extends ChangeNotifier {
   bool _completionObserved = false;
   bool _stopRecorded = false;
   Duration _position = Duration.zero;
+  // The timeline may show a requested seek before the decoder reaches it.
+  // Durable viewing must retain the last confirmed position in that window.
+  Duration _confirmedPosition = Duration.zero;
   Duration? _openingPosition;
   Duration? _seekTarget;
   final timelinePosition = ValueNotifier<Duration>(Duration.zero);
@@ -121,6 +124,7 @@ class TedPlayback extends ChangeNotifier {
         // demuxer timestamp at EOF. Only playback-restart confirms a landing.
         if (_seekTarget != null || _openingPosition != null || player.state.completed) return;
         _position = position;
+        _confirmedPosition = position;
         timelinePosition.value = position;
         notifyListeners();
       }),
@@ -131,6 +135,7 @@ class TedPlayback extends ChangeNotifier {
         if (!_ready) {
           _ready = true;
           _position = _openingPosition ?? Duration(milliseconds: session.resumeMs);
+          _confirmedPosition = _position;
           _validateDuration();
           _reportStartWhenReady();
         }
@@ -166,8 +171,10 @@ class TedPlayback extends ChangeNotifier {
     );
     _subscriptions.add(
       player.streams.playbackRestart.listen((_) {
+        if (_closed || _stopping) return;
         _reconnectsWithoutFrame = 0;
         if (!_seekHasLanded()) return;
+        final landedSeek = _seekTarget != null;
         if (!_startupReported && _startup.isRunning) {
           _startupReported = true;
           appLogger.i(
@@ -180,6 +187,10 @@ class TedPlayback extends ChangeNotifier {
         _landingWatchdog?.cancel();
         _pendingEnd?.cancel();
         _capturePosition();
+        if (landedSeek) {
+          _diagnostic('seek_landed');
+          _record('progress');
+        }
         _lastProgressPosition = _position;
         _idleProgressTicks = 0;
         if (_automaticRestarts > 0) _diagnostic('recovery_landed');
@@ -328,6 +339,7 @@ class TedPlayback extends ChangeNotifier {
     if (_seekTarget != null || _openingPosition != null) return false;
     final actual = player.decodedPosition;
     _position = actual;
+    _confirmedPosition = actual;
     timelinePosition.value = actual;
     return true;
   }
@@ -356,11 +368,12 @@ class TedPlayback extends ChangeNotifier {
     'playback_interrupted',
   }.contains(failure.code);
 
-  void _diagnostic(String phase, {String? code, int? httpStatus}) {
+  void _diagnostic(String phase, {String? code, int? httpStatus, int? targetMs}) {
     final message =
         'TED playback: phase=$phase backend=${player.playerType} media=${session.media.kind}/${session.media.id} '
         'session=${session.id} position_ms=$positionMs attempt=$_automaticRestarts '
-        'code=${code ?? "none"} http_status=${httpStatus ?? 0}';
+        'code=${code ?? "none"} http_status=${httpStatus ?? 0}'
+        '${targetMs == null ? "" : " target_ms=$targetMs"}';
     if (code == null) {
       appLogger.i(message);
     } else {
@@ -654,6 +667,13 @@ class TedPlayback extends ChangeNotifier {
   Future<void> seek(Duration position) => _control(() async {
     position = Duration(milliseconds: position.inMilliseconds.clamp(0, durationMs > 0 ? durationMs : 604800000));
     if (await _ensureCurrentHeaders()) {
+      // A native decoder crash cannot execute stop(). Commit the observed
+      // offset before entering the seek, without waiting on network delivery.
+      if (_ready) {
+        _record('progress');
+        if (journal != null) await flush();
+      }
+      _diagnostic('seek_requested', targetMs: position.inMilliseconds);
       _position = position;
       _openingPosition = position;
       _seekTarget = position;
@@ -665,10 +685,10 @@ class TedPlayback extends ChangeNotifier {
       try {
         await player.seek(position);
       } catch (_) {
-        _seekTarget = null;
-        _openingPosition = null;
-        _landingWatchdog?.cancel();
-        _capturePosition();
+        // A rejected command may leave a reset/transient native timestamp.
+        // Keep the confirmed checkpoint and let a decoded landing or the
+        // bounded recovery watchdog establish the playhead again.
+        _diagnostic('seek_failed', code: 'playback_failed', targetMs: position.inMilliseconds);
         rethrow;
       }
     }
@@ -729,7 +749,8 @@ class TedPlayback extends ChangeNotifier {
       if (!_closed) notifyListeners();
       return;
     }
-    final position = _position.inMilliseconds.clamp(0, durationMs > 0 ? durationMs : 604800000);
+    final observed = _seekTarget != null || _openingPosition != null ? _confirmedPosition : _position;
+    final position = observed.inMilliseconds.clamp(0, durationMs > 0 ? durationMs : 604800000);
     _pending.add({
       'id': const Uuid().v4(),
       'session_id': session.id,
@@ -830,6 +851,9 @@ class TedPlayback extends ChangeNotifier {
               naturalEof: !markWatched && (naturalEof || _completionObserved),
             );
           }
+          // Persist before any native pause/teardown that might fail or hang.
+          await flush();
+          _diagnostic('stop_saved');
           // A decoder that already failed can reject pause. The route may
           // still leave once its exact stop report is safely persisted/sent.
           try {
@@ -837,7 +861,6 @@ class TedPlayback extends ChangeNotifier {
           } catch (_) {
             /* disposal stops the failed core */
           }
-          await flush();
         })().catchError((Object error) {
           _stop = null;
           throw error;
@@ -845,9 +868,17 @@ class TedPlayback extends ChangeNotifier {
     return _stop!;
   }
 
-  Future<void> closePlayer() async {
-    if (_closed) return;
+  Future<void> closePlayer() => _close ??= _closePlayer();
+
+  Future<void> _closePlayer() async {
+    // Also cover forced route removal; normal Back already saved the stop.
+    try {
+      await stop();
+    } catch (_) {
+      _diagnostic('stop_save_failed', code: 'sync_pending');
+    }
     _closed = true;
+    _diagnostic('disposing');
     _progress?.cancel();
     _landingWatchdog?.cancel();
     _pendingEnd?.cancel();
@@ -855,7 +886,9 @@ class TedPlayback extends ChangeNotifier {
       await subscription.cancel();
     }
     await _controls;
+    _diagnostic('disposing_native');
     await player.dispose();
+    _diagnostic('disposed');
     timelinePosition.dispose();
     dispose();
   }

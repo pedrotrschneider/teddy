@@ -222,6 +222,9 @@ class _TeddyPlayerState extends State<TeddyPlayer> {
     });
     try {
       await _playback.stop(markWatched: action == TedPlayerAction.next);
+      // Retire the native renderer while this route still owns its output.
+      // Popping first can destroy or reconfigure HDR surfaces during teardown.
+      await _playback.closePlayer();
       final targets = action == TedPlayerAction.back
           ? const TedEpisodeTargets()
           : await widget.episodeTargets?.catchError((Object _) => const TedEpisodeTargets()) ?? _targets;
