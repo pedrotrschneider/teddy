@@ -968,7 +968,7 @@ void main() {
             f.player.handlePlayerEvent('playback-restart', {'positionSeconds': 0.0});
             await tester.pumpAndSettle();
             await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-            await tester.pumpAndSettle();
+            await settlePlayer(tester);
             expect(find.byType(TeddyPlayer), findsNothing);
             expect(find.byType(TedEpisodeDetail), findsOneWidget);
             expect(FocusManager.instance.primaryFocus, isNot(isA<FocusScopeNode>()));

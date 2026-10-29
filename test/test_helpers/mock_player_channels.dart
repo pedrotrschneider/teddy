@@ -1,6 +1,17 @@
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+// Native channel cancellation crosses the engine event loop. Drive both loops
+// during asynchronous teardown, as well as rendering/route-transition frames.
+Future<void> settlePlayer(WidgetTester tester) async {
+  await tester.pumpAndSettle();
+  for (var i = 0; i < 20; i++) {
+    await tester.pump();
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+  }
+  await tester.pumpAndSettle();
+}
+
 /// Installs mock method/event channel handlers for a native player for the
 /// duration of [testBody], then removes them.
 Future<void> withMockPlayerChannels({
