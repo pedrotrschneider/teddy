@@ -5,6 +5,7 @@ import android.content.Context
 import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Handler
+import android.util.Log
 import android.view.Display
 import androidx.annotation.RequiresApi
 import java.util.WeakHashMap
@@ -24,8 +25,8 @@ class FrameRateManager(
     // HDR-exit and the mode change into one HDMI renegotiation, which some
     // sink chains take 8-30 s to complete (#2172); sequenced, the HDR
     // infoframe clear is free and the SDR mode switch takes ~1 s. The
-    // caller must first finish decoder/surface teardown. This interval starts
-    // after that boundary, not when an asynchronous disposal was requested.
+    // MPV starts this grace period at the exit request, as in 0.3.2. Keep it
+    // independent of a slow decoder close; Surface lifetime is owned separately.
     private const val HDR_EXIT_SETTLE_MS = 400L
 
     // Managers are replaced with their player cores. A retired core can finish
@@ -118,10 +119,18 @@ class FrameRateManager(
     // the Dart caller's await doesn't hang on player dispose.
     firePendingCompletion("clear", switched = false)
     cancelPendingRestore()
-    if (!ownsDisplay()) return
+    if (!ownsDisplay()) {
+      Log.i(TAG, "Display restore skipped: a newer player owns the window")
+      return
+    }
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
     // Nothing to restore when no preferred mode was ever applied.
-    if ((activity.window?.attributes?.preferredDisplayModeId ?: 0) == 0) return
+    val preferredMode = activity.window?.attributes?.preferredDisplayModeId ?: 0
+    if (preferredMode == 0) {
+      Log.i(TAG, "Display restore skipped (preferredMode=0 announcedHdr=$hdrActive)")
+      return
+    }
+    Log.i(TAG, "Display restore requested (preferredMode=$preferredMode announcedHdr=$hdrActive delayMs=${if (hdrActive) HDR_EXIT_SETTLE_MS else 0L})")
     if (hdrActive) {
       val restore = Runnable {
         pendingRestoreRunnable = null
@@ -152,6 +161,7 @@ class FrameRateManager(
     }
     attrs.preferredDisplayModeId = 0
     window.attributes = attrs
+    Log.i(TAG, "Default display preference restored (currentMode=${currentModeDescription()})")
     PlayerDebugLog.d(TAG) { "restorePreferredDisplayMode: applied, after currentMode=${currentModeDescription()}" }
   }
 

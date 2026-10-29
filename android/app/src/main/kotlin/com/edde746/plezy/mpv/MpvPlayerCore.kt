@@ -3149,12 +3149,15 @@ class MpvPlayerCore private constructor(
 
     handler.removeCallbacksAndMessages(null)
 
-    // Cancel switches now, but restore the display only after native close
-    // releases the decoder and the HDR surfaces have been removed. A fixed
-    // delay measured from here can expire while MediaCodec is still closing.
-    val retiringFrameRateManager = frameRateManager
+    // Restore 0.3.2's display timing: release the window preference from the
+    // exit request, independently of decoder close. A missing HDR announcement
+    // restores immediately; an announced HDR session arms the manager's grace
+    // timer now. Keep the original order while investigating Google TV HDR exit.
+    // Surface ownership is separate and still lasts through native retirement.
     val retiringHdrActive = hdrDisplayActive
-    retiringFrameRateManager?.releasePending()
+    frameRateManager?.let { manager ->
+      if (preserveDisplayMode) manager.releasePending() else manager.clearVideoFrameRate(hdrActive = retiringHdrActive)
+    }
     frameRateManager = null
     audioFocusManager?.release()
     audioFocusManager = null
@@ -3199,7 +3202,6 @@ class MpvPlayerCore private constructor(
       sv?.holder?.removeCallback(this)
       osdSv?.holder?.removeCallback(osdSurfaceCallback)
       if (container?.parent != null) contentView?.removeView(container)
-      if (!preserveDisplayMode) retiringFrameRateManager?.clearVideoFrameRate(hdrActive = retiringHdrActive)
       settleDisposal(onComplete)
     }
 

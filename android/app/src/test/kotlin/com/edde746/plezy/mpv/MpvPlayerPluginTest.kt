@@ -775,7 +775,7 @@ class MpvPlayerPluginTest {
   }
 
   @Test
-  fun slowHdrDisposalRetainsSurfacesAndDisplayModeUntilNativeCloseReturns() {
+  fun slowHdrDisposalRestoresTheModeFromExitWhileRetainingTheDecoderSurfaces() {
     val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
     activity.setContentView(FrameLayout(activity))
     val content = activity.findViewById<ViewGroup>(android.R.id.content)
@@ -807,16 +807,19 @@ class MpvPlayerPluginTest {
       // Clearing it releases cadence policy, not the decoder's Surface.
       assertEquals(0f, votes.last(), 0f)
       core.dispose { completed++ }
-      // Outlive the old fixed HDR timer while JNI still owns the surfaces.
-      shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(2))
+      // Match 0.3.2's restore timing: it runs from the exit request, separately
+      // from decoder/surface retirement, including when native close is slow.
+      shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(300))
       assertEquals(4, preferredModeId(activity))
+      shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(200))
+      assertEquals(0, preferredModeId(activity))
       assertNotNull(container.parent)
       assertEquals(0, completed)
 
       release.countDown()
       awaitCondition { completed == 2 }
       assertNull(container.parent)
-      assertEquals(4, preferredModeId(activity))
+      assertEquals(0, preferredModeId(activity))
       shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(500))
       assertEquals(0, preferredModeId(activity))
     } finally {
@@ -826,7 +829,7 @@ class MpvPlayerPluginTest {
   }
 
   @Test
-  fun failedNativeCloseKeepsTheHdrSurfacesAndDoesNotRestoreTheDisplay() {
+  fun failedNativeCloseRetainsItsSurfacesWithoutDelayingTheExitDisplayRestore() {
     val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
     activity.setContentView(FrameLayout(activity))
     val container = FrameLayout(activity)
@@ -841,7 +844,39 @@ class MpvPlayerPluginTest {
     awaitCondition { completed }
     shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(2))
     assertNotNull(container.parent)
-    assertEquals(4, preferredModeId(activity))
+    assertEquals(0, preferredModeId(activity))
+  }
+
+  @Test
+  fun disposalWithoutAHdrAnnouncementRestoresTheModeBeforeTheDecoderCloses() {
+    // The supplied HDR capture had announcedHdr=false. A missing metadata hint
+    // must not move its restore from exit (0.3.2) to after decoder retirement.
+    val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+    activity.setContentView(FrameLayout(activity))
+    val container = FrameLayout(activity)
+    activity.findViewById<ViewGroup>(android.R.id.content).addView(container)
+    val entered = CountDownLatch(1)
+    val release = CountDownLatch(1)
+    val core = MpvPlayerCore(activity, nativeCloser = {
+      entered.countDown()
+      check(release.await(5, TimeUnit.SECONDS))
+    })
+    setCoreField(core, "surfaceContainer", container)
+    setCoreField(core, "frameRateManager", FrameRateManager(activity, Handler(Looper.getMainLooper())))
+    activity.window.attributes = activity.window.attributes.apply { preferredDisplayModeId = 4 }
+    var completed = false
+    try {
+      core.dispose { completed = true }
+      assertTrue(entered.await(1, TimeUnit.SECONDS))
+      assertEquals(0, preferredModeId(activity))
+      assertNotNull(container.parent)
+      assertFalse(completed)
+      release.countDown()
+      awaitCondition { completed }
+      assertNull(container.parent)
+    } finally {
+      release.countDown()
+    }
   }
 
   @Test
