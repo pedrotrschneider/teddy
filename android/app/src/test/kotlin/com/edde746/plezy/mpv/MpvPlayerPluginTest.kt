@@ -791,10 +791,21 @@ class MpvPlayerPluginTest {
     setCoreField(core, "frameRateManager", FrameRateManager(activity, Handler(Looper.getMainLooper())))
     setBoolean(core, "hdrDisplayActive", true)
     activity.window.attributes = activity.window.attributes.apply { preferredDisplayModeId = 4 }
+    val votes = mutableListOf<Float>()
+    val surface = Surface()
+    val vote = SurfaceFrameRateVote { _, rate -> votes += rate }
+    vote.onSurfaceChanged(surface)
+    vote.onMediaFrameRate(23.976f)
+    vote.onStarted()
+    assertEquals(23.976f, votes.last(), 0f)
+    setCoreField(core, "frameRateVote", vote)
     var completed = 0
     try {
       core.dispose { completed++ }
       assertTrue(entered.await(1, TimeUnit.SECONDS))
+      // A stale rendering hint must not survive a slow/failed decoder close.
+      // Clearing it releases cadence policy, not the decoder's Surface.
+      assertEquals(0f, votes.last(), 0f)
       core.dispose { completed++ }
       // Outlive the old fixed HDR timer while JNI still owns the surfaces.
       shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(2))
@@ -810,6 +821,7 @@ class MpvPlayerPluginTest {
       assertEquals(0, preferredModeId(activity))
     } finally {
       release.countDown()
+      surface.release()
     }
   }
 

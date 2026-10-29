@@ -514,7 +514,7 @@ void main() {
   ) async {
     TvDetectionService.debugSetAppleTVOverride(true);
     addTearDown(TvDetectionService.debugReset);
-    final f = ControlFixture();
+    final f = ControlFixture()..releaseDispose = Completer<void>();
     final installed = Completer<void>(), release = Completer<void>();
     await playerTest(tester, f, () async {
       final next = TedTitle(const TedMediaIdentity('episode', 'tt1234567:1:3'), 'Next', '', false, 0, 0, false);
@@ -525,6 +525,9 @@ void main() {
         onTransition: (target) async {
           expect(target.media, next.media);
           expect(find.byType(TeddyPlayer), findsOneWidget);
+          expect(f.calls.where((call) => call.method == 'dispose'), isEmpty);
+          expect(f.reports.last['kind'], 'complete');
+          expect(f.reports.last['position_ms'], 17000);
           installed.complete();
           await release.future;
         },
@@ -541,6 +544,12 @@ void main() {
       await settlePlayer(tester);
       expect(lastExit!.target!.media, next.media);
       expect(find.byType(TeddyPlayer), findsNothing);
+      expect(f.calls.where((call) => call.method == 'dispose'), hasLength(1));
+      expect(f.releaseDispose!.isCompleted, false);
+      f.releaseDispose!.complete();
+      await settlePlayer(tester);
+      expect(lastExit!.target!.media, next.media);
+      expect(f.reports.where((report) => report['kind'] == 'complete'), hasLength(1));
     });
   });
 
@@ -630,7 +639,7 @@ void main() {
     });
   });
 
-  testWidgets('Back keeps the player route mounted until native disposal finishes', (tester) async {
+  testWidgets('Back saves the stop and reveals the caller before native retirement finishes', (tester) async {
     final f = ControlFixture()..releaseDispose = Completer<void>();
     await playerTest(tester, f, () async {
       try {
@@ -640,10 +649,17 @@ void main() {
         expect(f.calls.where((call) => call.method == 'dispose'), hasLength(1));
         expect(f.reports.last['kind'], 'stop');
         expect(f.reports.last['position_ms'], 17000);
-        expect(find.byType(TeddyPlayer), findsOneWidget);
+        expect(find.byType(TeddyPlayer), findsNothing);
+        expect(find.text('Start fixture'), findsOneWidget);
+        expect(lastExit!.action, TedPlayerAction.back);
+        final callerFocus = FocusManager.instance.primaryFocus;
+        expect(callerFocus, isNotNull);
         f.releaseDispose!.complete();
         await settlePlayer(tester);
         expect(find.byType(TeddyPlayer), findsNothing);
+        expect(FocusManager.instance.primaryFocus, same(callerFocus));
+        expect(f.calls.where((call) => call.method == 'dispose'), hasLength(1));
+        expect(f.reports.where((report) => report['kind'] == 'stop'), hasLength(1));
         expect(lastExit!.action, TedPlayerAction.back);
       } finally {
         if (!f.releaseDispose!.isCompleted) f.releaseDispose!.complete();

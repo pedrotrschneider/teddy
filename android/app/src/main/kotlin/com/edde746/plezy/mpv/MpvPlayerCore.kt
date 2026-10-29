@@ -2172,6 +2172,8 @@ class MpvPlayerCore private constructor(
       return
     }
     videoOutputRestoring = true
+    val started = SystemClock.elapsedRealtime()
+    Log.i(TAG, "Surface retirement started (reason=$reason videoLost=$videoLost)")
     val epoch = videoOutputEpoch + 1L
     videoOutputEpoch = epoch
     val completed = CountDownLatch(1)
@@ -2222,7 +2224,7 @@ class MpvPlayerCore private constructor(
             applyDeferredResumeIfNeeded(p, reason)
             pausedForSurfaceLoss = false
           }
-          PlayerDebugLog.d(TAG) { "Surface handoff complete ($reason, epoch=$epoch, placeholder=$isPlaceholder)" }
+          Log.i(TAG, "Surface retirement finished in ${SystemClock.elapsedRealtime() - started}ms (reason=$reason placeholder=$isPlaceholder)")
         }
       } catch (error: Exception) {
         failure.set(error)
@@ -3157,6 +3159,12 @@ class MpvPlayerCore private constructor(
     audioFocusManager?.release()
     audioFocusManager = null
     unregisterDisplayListener()
+    // Release the cadence request before closing the decoder, as on Pause.
+    // This does not release the Surface: its consumer still owns it until close
+    // returns. Deferring this hint until then can stack a display-policy change
+    // onto removal of the HDR video plane.
+    frameRateVote.onStopped()
+    frameRateVote.onSurfaceChanged(null)
 
     // Cancel all coroutines
     scope.cancel()
@@ -3188,8 +3196,6 @@ class MpvPlayerCore private constructor(
 
     fun finishRetirement() {
       check(Looper.myLooper() == Looper.getMainLooper())
-      frameRateVote.onStopped()
-      frameRateVote.onSurfaceChanged(null)
       sv?.holder?.removeCallback(this)
       osdSv?.holder?.removeCallback(osdSurfaceCallback)
       if (container?.parent != null) contentView?.removeView(container)
@@ -3230,7 +3236,7 @@ class MpvPlayerCore private constructor(
     if (p != null || nativeCloserOverride != null) {
       Thread {
         val started = SystemClock.elapsedRealtime()
-        Log.i(TAG, "Native teardown started (hdr=$retiringHdrActive)")
+        Log.i(TAG, "Native teardown started (announcedHdr=$retiringHdrActive)")
         try {
           // Native close blocks through decoder and VO teardown, and on a
           // wedged decoder never returns. Only this thread waits on it: the

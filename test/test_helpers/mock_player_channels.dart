@@ -2,7 +2,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 // Native channel cancellation crosses the engine event loop. Drive both loops
-// when a route now awaits teardown, as well as its rendering/transition frames.
+// during asynchronous teardown, as well as rendering/route-transition frames.
 Future<void> settlePlayer(WidgetTester tester) async {
   await tester.pumpAndSettle();
   for (var i = 0; i < 20; i++) {
