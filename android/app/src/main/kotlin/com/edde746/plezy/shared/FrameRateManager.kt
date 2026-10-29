@@ -5,10 +5,9 @@ import android.content.Context
 import android.hardware.display.DisplayManager
 import android.os.Build
 import android.os.Handler
-import android.util.Log
 import android.view.Display
+import android.view.WindowManager
 import androidx.annotation.RequiresApi
-import java.util.WeakHashMap
 
 class FrameRateManager(
   private val activity: Activity,
@@ -25,22 +24,10 @@ class FrameRateManager(
     // HDR-exit and the mode change into one HDMI renegotiation, which some
     // sink chains take 8-30 s to complete (#2172); sequenced, the HDR
     // infoframe clear is free and the SDR mode switch takes ~1 s. The
-    // MPV starts this grace period at the exit request, as in 0.3.2. Keep it
-    // independent of a slow decoder close; Surface lifetime is owned separately.
+    // player's surface teardown commits the HDR exit within ~50 ms of
+    // dispose, so 400 ms covers it with margin even on a busy main thread.
     private const val HDR_EXIT_SETTLE_MS = 400L
-
-    // Managers are replaced with their player cores. A retired core can finish
-    // closing after a successor has already claimed the same Activity window.
-    private val displayOwners = WeakHashMap<Activity, Any>()
   }
-
-  private val displayOwner = Any()
-
-  init {
-    synchronized(displayOwners) { displayOwners[activity] = displayOwner }
-  }
-
-  private fun ownsDisplay(): Boolean = synchronized(displayOwners) { displayOwners[activity] === displayOwner }
 
   private var currentVideoFps: Float = 0f
   private var currentVideoWidth: Int = 0
@@ -119,22 +106,12 @@ class FrameRateManager(
     // the Dart caller's await doesn't hang on player dispose.
     firePendingCompletion("clear", switched = false)
     cancelPendingRestore()
-    if (!ownsDisplay()) {
-      Log.i(TAG, "Display restore skipped: a newer player owns the window")
-      return
-    }
     if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return
     // Nothing to restore when no preferred mode was ever applied.
-    val preferredMode = activity.window?.attributes?.preferredDisplayModeId ?: 0
-    if (preferredMode == 0) {
-      Log.i(TAG, "Display restore skipped (preferredMode=0 announcedHdr=$hdrActive)")
-      return
-    }
-    Log.i(TAG, "Display restore requested (preferredMode=$preferredMode announcedHdr=$hdrActive delayMs=${if (hdrActive) HDR_EXIT_SETTLE_MS else 0L})")
+    if ((activity.window?.attributes?.preferredDisplayModeId ?: 0) == 0) return
     if (hdrActive) {
       val restore = Runnable {
         pendingRestoreRunnable = null
-        if (!ownsDisplay()) return@Runnable
         // PlayerDebugLog, not [log]: this fires after core dispose, when the
         // Flutter-channel logger is already gone.
         PlayerDebugLog.d(TAG) { "restoring default display mode after HDR exit" }
@@ -161,7 +138,6 @@ class FrameRateManager(
     }
     attrs.preferredDisplayModeId = 0
     window.attributes = attrs
-    Log.i(TAG, "Default display preference restored (currentMode=${currentModeDescription()})")
     PlayerDebugLog.d(TAG) { "restorePreferredDisplayMode: applied, after currentMode=${currentModeDescription()}" }
   }
 
@@ -178,7 +154,6 @@ class FrameRateManager(
   fun releasePending() {
     PlayerDebugLog.d(TAG) { "releasePending" }
     currentVideoFps = 0f
-    cancelPendingRestore()
     firePendingCompletion("release", switched = false)
   }
 
@@ -285,7 +260,12 @@ class FrameRateManager(
   }
 
   @RequiresApi(Build.VERSION_CODES.M)
-  private fun currentDisplay(): Display? = activity.playerDisplay()
+  private fun currentDisplay(): Display? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+    activity.display
+  } else {
+    @Suppress("DEPRECATION")
+    (activity.getSystemService(Context.WINDOW_SERVICE) as WindowManager).defaultDisplay
+  }
 
   @RequiresApi(Build.VERSION_CODES.M)
   private fun currentDisplayMode(): Display.Mode? = currentDisplay()?.mode

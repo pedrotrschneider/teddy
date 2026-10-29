@@ -27,7 +27,6 @@ import com.edde746.plezy.shared.PlayerDebugLog
 import com.edde746.plezy.shared.PlayerDelegate
 import com.edde746.plezy.shared.PlayerSurfaceHost
 import com.edde746.plezy.shared.SurfacePlayerCore
-import com.edde746.plezy.shared.playerDisplay
 import java.util.Locale
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -63,8 +62,7 @@ class MpvPlayerCore private constructor(
    * that a command without a native player fails.
    */
   private val commandRunnerOverride: (suspend (Array<String>) -> Long?)?,
-  initializedForTesting: Boolean,
-  private val nativeCloserOverride: (() -> Unit)? = null
+  initializedForTesting: Boolean
 ) : SurfaceHolder.Callback,
   SurfacePlayerCore {
   constructor(
@@ -87,10 +85,6 @@ class MpvPlayerCore private constructor(
     propertyWriter: (suspend (String, String) -> Unit)?,
     commandRunner: suspend (Array<String>) -> Long?
   ) : this(context, audioOnly, true, 1f, "warn", propertyWriter, commandRunner, true)
-
-  /** Holds the real disposal worker at the JNI boundary in lifecycle tests. */
-  internal constructor(context: Context, nativeCloser: () -> Unit) :
-    this(context, false, true, 1f, "warn", null, null, true, nativeCloser)
 
   companion object {
     private const val TAG = "MpvPlayerCore"
@@ -736,7 +730,12 @@ class MpvPlayerCore private constructor(
     }
   }
 
-  private fun currentDisplay(): android.view.Display? = activity.playerDisplay()
+  @Suppress("DEPRECATION")
+  private fun currentDisplay(): android.view.Display? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+    activity.display
+  } else {
+    activity.windowManager.defaultDisplay
+  }
 
   private fun currentDisplayFpsOverride(): String? {
     if (audioOnly) return null
@@ -2172,8 +2171,6 @@ class MpvPlayerCore private constructor(
       return
     }
     videoOutputRestoring = true
-    val started = SystemClock.elapsedRealtime()
-    Log.i(TAG, "Surface retirement started (reason=$reason videoLost=$videoLost)")
     val epoch = videoOutputEpoch + 1L
     videoOutputEpoch = epoch
     val completed = CountDownLatch(1)
@@ -2224,7 +2221,7 @@ class MpvPlayerCore private constructor(
             applyDeferredResumeIfNeeded(p, reason)
             pausedForSurfaceLoss = false
           }
-          Log.i(TAG, "Surface retirement finished in ${SystemClock.elapsedRealtime() - started}ms (reason=$reason placeholder=$isPlaceholder)")
+          PlayerDebugLog.d(TAG) { "Surface handoff complete ($reason, epoch=$epoch, placeholder=$isPlaceholder)" }
         }
       } catch (error: Exception) {
         failure.set(error)
@@ -3149,23 +3146,20 @@ class MpvPlayerCore private constructor(
 
     handler.removeCallbacksAndMessages(null)
 
-    // Restore 0.3.2's display timing: release the window preference from the
-    // exit request, independently of decoder close. A missing HDR announcement
-    // restores immediately; an announced HDR session arms the manager's grace
-    // timer now. Keep the original order while investigating Google TV HDR exit.
-    // Surface ownership is separate and still lasts through native retirement.
-    val retiringHdrActive = hdrDisplayActive
+    // Clean up frame rate and audio focus. The display-mode restore is owned
+    // here; Dart's explicit clearVideoFrameRate before dispose is idempotent
+    // against it (the manager returns once preferredDisplayModeId is 0, and
+    // re-arms the same deferred HDR restore otherwise). The deferred restore
+    // runs on the manager's own handler, not [handler], so the wholesale
+    // removeCallbacksAndMessages above cannot cancel it.
     frameRateManager?.let { manager ->
-      if (preserveDisplayMode) manager.releasePending() else manager.clearVideoFrameRate(hdrActive = retiringHdrActive)
+      if (preserveDisplayMode) manager.releasePending() else manager.clearVideoFrameRate(hdrActive = hdrDisplayActive)
     }
     frameRateManager = null
     audioFocusManager?.release()
     audioFocusManager = null
     unregisterDisplayListener()
-    // Release the cadence request before closing the decoder, as on Pause.
-    // This does not release the Surface: its consumer still owns it until close
-    // returns. Deferring this hint until then can stack a display-policy change
-    // onto removal of the HDR video plane.
+    // Media3 onStopped: the Surface outlives this core until native teardown.
     frameRateVote.onStopped()
     frameRateVote.onSurfaceChanged(null)
 
@@ -3197,14 +3191,6 @@ class MpvPlayerCore private constructor(
     val contentView = if (audioOnly) null else activity.findViewById<ViewGroup>(android.R.id.content)
     val retiringPlaceholder = placeholder
 
-    fun finishRetirement() {
-      check(Looper.myLooper() == Looper.getMainLooper())
-      sv?.holder?.removeCallback(this)
-      osdSv?.holder?.removeCallback(osdSurfaceCallback)
-      if (container?.parent != null) contentView?.removeView(container)
-      settleDisposal(onComplete)
-    }
-
     surfaceContainer = null
     surfaceView = null
     osdSurfaceView = null
@@ -3235,10 +3221,8 @@ class MpvPlayerCore private constructor(
     isInitialized = false
 
     // Close the player on a background thread, then release surfaces and remove views.
-    if (p != null || nativeCloserOverride != null) {
+    if (p != null) {
       Thread {
-        val started = SystemClock.elapsedRealtime()
-        Log.i(TAG, "Native teardown started (announcedHdr=$retiringHdrActive)")
         try {
           // Native close blocks through decoder and VO teardown, and on a
           // wedged decoder never returns. Only this thread waits on it: the
@@ -3249,7 +3233,7 @@ class MpvPlayerCore private constructor(
           // returns therefore leaks one container for the life of the
           // process. That is the price of recovery: the alternative is
           // freeing a Surface a decoder is still writing into.
-          nativeCloserOverride?.invoke() ?: p?.close()
+          p.close()
         } catch (e: Exception) {
           Log.w(TAG, "MPV close failed", e)
           // A failed close is not permission to free a live Surface producer,
@@ -3269,16 +3253,28 @@ class MpvPlayerCore private constructor(
         }
         retiringPlaceholder?.close()
         player = null
-        Log.i(TAG, "Native teardown finished in ${SystemClock.elapsedRealtime() - started}ms")
+        PlayerDebugLog.d(TAG) { "Disposed (native)" }
         Handler(Looper.getMainLooper()).post {
-          finishRetirement()
+          sv?.holder?.removeCallback(this)
+          osdSv?.holder?.removeCallback(osdSurfaceCallback)
+          if (container?.parent != null) {
+            contentView?.removeView(container)
+          }
+          settleDisposal(onComplete)
         }
       }.start()
     } else {
       // No player — safe to remove views immediately.
       disposalComplete.countDown()
       retiringPlaceholder?.close()
-      finishRetirement()
+      Handler(Looper.getMainLooper()).postAtFrontOfQueue {
+        sv?.holder?.removeCallback(this)
+        osdSv?.holder?.removeCallback(osdSurfaceCallback)
+        if (container?.parent != null) {
+          contentView?.removeView(container)
+        }
+      }
+      settleDisposal(onComplete)
     }
   }
 }

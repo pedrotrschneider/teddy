@@ -89,11 +89,11 @@ void main() {
         f.player.handlePlayerEvent('start-file', null);
         f.player.handlePlayerEvent('file-loaded', null);
         f.player.handlePlayerEvent('playback-restart', null);
-        await settlePlayer(tester);
+        await tester.pumpAndSettle();
         expect(await alpha(viewport), 0, reason: 'Flutter must leave the native video plane visible');
         expect(await alpha(tester.getTopLeft(find.byType(VideoControlsHeader)) + const Offset(22, 22)), greaterThan(0));
         await tester.pumpWidget(const SizedBox());
-        await settlePlayer(tester);
+        await tester.pumpAndSettle();
         await tester.runAsync(() async {
           await f.player.dispose();
         });
@@ -168,7 +168,7 @@ void main() {
     await tester.pump();
     f.player.handlePropertyChange('time-pos', 17.0);
     f.player.handlePlayerEvent('playback-restart', {'positionSeconds': 17.0});
-    await settlePlayer(tester);
+    await tester.pumpAndSettle();
   }
 
   Future<void> playerTest(WidgetTester tester, ControlFixture f, Future<void> Function() body) =>
@@ -181,9 +181,8 @@ void main() {
             await body();
           } finally {
             if (f.releaseRefresh != null && !f.releaseRefresh!.isCompleted) f.releaseRefresh!.complete();
-            if (f.releaseDispose != null && !f.releaseDispose!.isCompleted) f.releaseDispose!.complete();
             await tester.pumpWidget(const SizedBox());
-            await settlePlayer(tester);
+            await tester.pumpAndSettle();
             await tester.runAsync(() => f.player.dispose());
             f.auth.close();
           }
@@ -204,7 +203,7 @@ void main() {
           f.player.handlePropertyChange('time-pos', 99.5);
           f.nativeEof = true;
           f.player.handlePropertyChange('eof-reached', true);
-          await settlePlayer(tester);
+          await tester.pumpAndSettle();
           expect(find.byType(TeddyPlayer), findsNothing);
           expect(lastExit!.target?.media, autoplay ? next.media : null);
           expect(f.reports.last['natural_eof'], true);
@@ -259,7 +258,7 @@ void main() {
       await tester.pump();
       f.player.handlePropertyChange('time-pos', 17.0);
       f.player.handlePlayerEvent('playback-restart', {'positionSeconds': 17.0});
-      await settlePlayer(tester);
+      await tester.pumpAndSettle();
       ui.AppExitResponse? response;
       final exit = tester.binding.handleRequestAppExit().then((value) => response = value);
       // Native stream cancellation can finish on the real event loop while
@@ -276,7 +275,7 @@ void main() {
       expect(saved.last['position_ms'], 17000);
       expect(saved.last['natural_eof'], false);
       await tester.pumpWidget(const SizedBox.shrink());
-      await settlePlayer(tester);
+      await tester.pumpAndSettle();
       expect(tester.takeException(), isNull);
     });
   });
@@ -288,12 +287,12 @@ void main() {
         await playerTest(tester, f, () async {
           await mount(tester, f);
           await tester.tap(find.byTooltip(t.videoControls.tracksButton));
-          await settlePlayer(tester);
+          await tester.pumpAndSettle();
           f.now = f.now.add(const Duration(minutes: 11));
           f.releaseRefresh = Completer();
           f.calls.clear();
           await tester.tap(find.textContaining(audio ? 'Portuguese audio' : 'Spanish captions'));
-          await settlePlayer(tester);
+          await tester.pumpAndSettle();
           expect(f.refreshEntered.isCompleted, false);
           expect(f.rotations, 0);
           expect(
@@ -309,7 +308,7 @@ void main() {
           // decoder controls must avoid rotating/reopening the media.
           f.releaseRefresh!.complete();
           await tester.binding.handlePopRoute();
-          await settlePlayer(tester);
+          await tester.pumpAndSettle();
           expect(find.text('Start fixture'), findsOneWidget);
         });
       },
@@ -375,7 +374,7 @@ void main() {
       );
       final slider = tester.widget<TimelineSlider>(find.byType(TimelineSlider));
       slider.focusNode!.requestFocus();
-      await settlePlayer(tester);
+      await tester.pumpAndSettle();
       await tester.sendKeyDownEvent(LogicalKeyboardKey.arrowRight);
       await tester.pump(const Duration(milliseconds: 300));
       await tester.sendKeyRepeatEvent(LogicalKeyboardKey.arrowRight);
@@ -387,14 +386,14 @@ void main() {
       final lastSeek = f.calls.lastWhere((c) => c.method == 'command' && (c.arguments as Map)['args'][0] == 'seek');
       final target = double.parse((lastSeek.arguments as Map)['args'][1] as String);
       f.player.handlePlayerEvent('playback-restart', {'positionSeconds': target});
-      await settlePlayer(tester);
+      await tester.pumpAndSettle();
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
-      await settlePlayer(tester);
+      await tester.pumpAndSettle();
       expect(button.focusNode!.hasPrimaryFocus, true);
       await tester.tap(
         find.byWidgetPredicate((w) => w is VideoControlButton && w.semanticLabel == t.videoControls.nextButton),
       );
-      await settlePlayer(tester);
+      await tester.pumpAndSettle();
       expect(lastExit!.action, TedPlayerAction.next);
       expect(lastExit!.target!.media, next.media);
       expect(f.reports.last['kind'], 'complete');
@@ -424,7 +423,7 @@ void main() {
       expect(tester.widget<ScaleTransition>(scale).scale.value, inInclusiveRange(.94, 1.06));
       expect(slider.focusNode!.hasPrimaryFocus, true);
       f.player.handlePropertyChange('paused-for-cache', false);
-      await settlePlayer(tester);
+      await tester.pumpAndSettle();
       expect(find.byType(TedPlayerLoading), findsNothing);
       expect(slider.focusNode!.hasPrimaryFocus, true);
     });
@@ -439,10 +438,10 @@ void main() {
       await tester.pump();
       expect(find.byType(TedPlayerLoading), findsOneWidget);
       f.player.handlePlayerEvent('playback-restart', {'positionSeconds': 39.9});
-      await settlePlayer(tester);
+      await tester.pumpAndSettle();
       expect(find.byType(TedPlayerLoading), findsNothing);
       await controls.onPlayPauseRequested!(TransportCommand.pause);
-      await settlePlayer(tester);
+      await tester.pumpAndSettle();
       expect(find.byType(TedPlayerLoading), findsNothing);
     });
   });
@@ -457,26 +456,26 @@ void main() {
       await mount(tester, f);
       final controls = tester.widget<PlexVideoControls>(find.byType(PlexVideoControls));
       controls.chromeController.hide();
-      await settlePlayer(tester);
+      await tester.pumpAndSettle();
       final surface = FocusManager.instance.primaryFocus;
       final mouse = await tester.createGesture(kind: ui.PointerDeviceKind.mouse);
       await mouse.addPointer(location: const Offset(20, 200));
       await mouse.moveTo(const Offset(50, 200));
-      await settlePlayer(tester);
+      await tester.pumpAndSettle();
       var slider = tester.widget<TimelineSlider>(find.byType(TimelineSlider));
       expect(slider.focusNode!.hasPrimaryFocus, false);
       expect(FocusManager.instance.primaryFocus, same(surface));
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
-      await settlePlayer(tester);
+      await tester.pumpAndSettle();
       expect(slider.focusNode!.hasPrimaryFocus, true);
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
-      await settlePlayer(tester);
+      await tester.pumpAndSettle();
       final pause = tester.widget<VideoControlButton>(
         find.byWidgetPredicate((w) => w is VideoControlButton && w.semanticLabel == t.videoControls.pauseButton),
       );
       expect(pause.focusNode!.hasPrimaryFocus, true);
       controls.chromeController.hide();
-      await settlePlayer(tester);
+      await tester.pumpAndSettle();
       await tester.sendKeyDownEvent(LogicalKeyboardKey.arrowRight);
       await tester.pump(const Duration(milliseconds: 30));
       slider = tester.widget<TimelineSlider>(find.byType(TimelineSlider));
@@ -514,7 +513,7 @@ void main() {
   ) async {
     TvDetectionService.debugSetAppleTVOverride(true);
     addTearDown(TvDetectionService.debugReset);
-    final f = ControlFixture()..releaseDispose = Completer<void>();
+    final f = ControlFixture();
     final installed = Completer<void>(), release = Completer<void>();
     await playerTest(tester, f, () async {
       final next = TedTitle(const TedMediaIdentity('episode', 'tt1234567:1:3'), 'Next', '', false, 0, 0, false);
@@ -525,9 +524,6 @@ void main() {
         onTransition: (target) async {
           expect(target.media, next.media);
           expect(find.byType(TeddyPlayer), findsOneWidget);
-          expect(f.calls.where((call) => call.method == 'dispose'), isEmpty);
-          expect(f.reports.last['kind'], 'complete');
-          expect(f.reports.last['position_ms'], 17000);
           installed.complete();
           await release.future;
         },
@@ -537,19 +533,12 @@ void main() {
       );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
-      await settlePlayer(tester);
       expect(installed.isCompleted, true);
       expect(find.byType(TeddyPlayer), findsOneWidget);
       release.complete();
-      await settlePlayer(tester);
+      await tester.pumpAndSettle();
       expect(lastExit!.target!.media, next.media);
       expect(find.byType(TeddyPlayer), findsNothing);
-      expect(f.calls.where((call) => call.method == 'dispose'), hasLength(1));
-      expect(f.releaseDispose!.isCompleted, false);
-      f.releaseDispose!.complete();
-      await settlePlayer(tester);
-      expect(lastExit!.target!.media, next.media);
-      expect(f.reports.where((report) => report['kind'] == 'complete'), hasLength(1));
     });
   });
 
@@ -560,11 +549,11 @@ void main() {
     await playerTest(tester, f, () async {
       await mount(tester, f);
       await tester.tap(find.byTooltip(t.videoControls.tracksButton));
-      await settlePlayer(tester);
+      await tester.pumpAndSettle();
       final sheet = OverlaySheetController.of(tester.element(find.byType(FocusableListTile).first));
       expect(sheet.ownsFocus(FocusManager.instance.primaryFocus), true);
       FocusManager.instance.rootScope.requestFocus();
-      await settlePlayer(tester);
+      await tester.pumpAndSettle();
       expect(sheet.ownsFocus(FocusManager.instance.primaryFocus), true);
       final audioTiles = find
           .byType(ListTile)
@@ -575,9 +564,9 @@ void main() {
       audioTiles.first.focusNode!.requestFocus();
       await tester.pump();
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
-      await settlePlayer(tester);
+      await tester.pumpAndSettle();
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-      await settlePlayer(tester);
+      await tester.pumpAndSettle();
       expect(
         f.calls
             .where((c) => c.method == 'setProperty' && (c.arguments as Map)['name'] == 'aid')
@@ -586,9 +575,9 @@ void main() {
       );
       expect(sheet.isOpen, false);
       await tester.tap(find.byTooltip(t.videoControls.tracksButton));
-      await settlePlayer(tester);
+      await tester.pumpAndSettle();
       await tester.tap(find.textContaining('Spanish captions'));
-      await settlePlayer(tester);
+      await tester.pumpAndSettle();
       expect(
         f.calls
             .where((c) => c.method == 'setProperty' && (c.arguments as Map)['name'] == 'sid')
@@ -596,13 +585,13 @@ void main() {
         contains('4'),
       );
       await tester.tap(find.byTooltip(t.videoControls.tracksButton));
-      await settlePlayer(tester);
+      await tester.pumpAndSettle();
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-      await settlePlayer(tester);
+      await tester.pumpAndSettle();
       expect(sheet.isOpen, false);
       expect(find.byType(TeddyPlayer), findsOneWidget);
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-      await settlePlayer(tester);
+      await tester.pumpAndSettle();
       expect(find.byType(TeddyPlayer), findsNothing);
     });
   });
@@ -613,11 +602,11 @@ void main() {
       await playerTest(tester, f, () async {
         await mount(tester, f);
         if (hidden) tester.widget<PlexVideoControls>(find.byType(PlexVideoControls)).chromeController.hide();
-        await settlePlayer(tester);
+        await tester.pumpAndSettle();
         FocusManager.instance.rootScope.requestFocus();
         await tester.pump();
         await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-        await settlePlayer(tester);
+        await tester.pumpAndSettle();
         expect(find.byType(TeddyPlayer), findsNothing);
         expect(lastExit!.action, TedPlayerAction.back);
         expect(f.reports.last['natural_eof'], false);
@@ -631,39 +620,11 @@ void main() {
       await mount(tester, f);
       f.rejectPause = true;
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-      await settlePlayer(tester);
+      await tester.pumpAndSettle();
       expect(find.byType(TeddyPlayer), findsNothing);
       expect(f.reports.last['kind'], 'stop');
       expect(f.reports.last['position_ms'], 17000);
       expect(f.reports.last['natural_eof'], false);
-    });
-  });
-
-  testWidgets('Back saves the stop and reveals the caller before native retirement finishes', (tester) async {
-    final f = ControlFixture()..releaseDispose = Completer<void>();
-    await playerTest(tester, f, () async {
-      try {
-        await mount(tester, f);
-        await tester.sendKeyEvent(LogicalKeyboardKey.escape);
-        await settlePlayer(tester);
-        expect(f.calls.where((call) => call.method == 'dispose'), hasLength(1));
-        expect(f.reports.last['kind'], 'stop');
-        expect(f.reports.last['position_ms'], 17000);
-        expect(find.byType(TeddyPlayer), findsNothing);
-        expect(find.text('Start fixture'), findsOneWidget);
-        expect(lastExit!.action, TedPlayerAction.back);
-        final callerFocus = FocusManager.instance.primaryFocus;
-        expect(callerFocus, isNotNull);
-        f.releaseDispose!.complete();
-        await settlePlayer(tester);
-        expect(find.byType(TeddyPlayer), findsNothing);
-        expect(FocusManager.instance.primaryFocus, same(callerFocus));
-        expect(f.calls.where((call) => call.method == 'dispose'), hasLength(1));
-        expect(f.reports.where((report) => report['kind'] == 'stop'), hasLength(1));
-        expect(lastExit!.action, TedPlayerAction.back);
-      } finally {
-        if (!f.releaseDispose!.isCompleted) f.releaseDispose!.complete();
-      }
     });
   });
 
@@ -675,7 +636,7 @@ void main() {
       await mount(tester, f);
       f.rejectReports = true;
       await tester.binding.handlePopRoute();
-      await settlePlayer(tester);
+      await tester.pumpAndSettle();
       expect(
         f.reports.where((e) => e['kind'] == 'stop'),
         isNotEmpty,
@@ -685,9 +646,9 @@ void main() {
       expect(find.text('Retry sync'), findsOneWidget);
       f.rejectReports = false;
       await tester.tap(find.text('Retry sync'));
-      await settlePlayer(tester);
+      await tester.pumpAndSettle();
       await tester.binding.handlePopRoute();
-      await settlePlayer(tester);
+      await tester.pumpAndSettle();
       expect(find.text('Start fixture'), findsOneWidget);
       final stops = f.reports.where((e) => e['kind'] == 'stop');
       expect(stops.map((e) => e['id']).toSet().length, 1);

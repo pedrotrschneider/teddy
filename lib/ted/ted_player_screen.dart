@@ -222,9 +222,6 @@ class _TeddyPlayerState extends State<TeddyPlayer> {
     });
     try {
       await _playback.stop(markWatched: action == TedPlayerAction.next);
-      // Reveal the details UI before retiring the HDR output. Native owns its
-      // SurfaceViews independently of this route and retains them through close;
-      // dispose below starts that retirement after the route transition.
       final targets = action == TedPlayerAction.back
           ? const TedEpisodeTargets()
           : await widget.episodeTargets?.catchError((Object _) => const TedEpisodeTargets()) ?? _targets;
@@ -242,9 +239,6 @@ class _TeddyPlayerState extends State<TeddyPlayer> {
       setState(() {
         _canExit = true;
       });
-      appLogger.i(
-        'TED player exit: action=${action.name} backend=${_playback.player.playerType} phase=returning_to_details',
-      );
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           Navigator.of(context).pop(TedPlayerExit(action, target: action == TedPlayerAction.back ? null : target));

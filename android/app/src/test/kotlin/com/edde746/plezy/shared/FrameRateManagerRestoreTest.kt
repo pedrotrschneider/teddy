@@ -91,33 +91,4 @@ class FrameRateManagerRestoreTest {
     shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(500))
     assertEquals(7, preferredModeId(activity))
   }
-
-  @Test
-  fun aRetiredManagerCannotRestoreTheSuccessorsDisplayMode() {
-    val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
-    val retiring = buildManager(activity)
-    applyPreferredMode(activity, 4)
-    retiring.clearVideoFrameRate(hdrActive = true)
-    val successor = buildManager(activity)
-    applyPreferredMode(activity, 7)
-
-    shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(500))
-    assertEquals(7, preferredModeId(activity))
-    // A slow native close may request its restore after the new core exists.
-    retiring.clearVideoFrameRate(hdrActive = false)
-    assertEquals(7, preferredModeId(activity))
-    successor.clearVideoFrameRate(hdrActive = false)
-    assertEquals(0, preferredModeId(activity))
-  }
-
-  @Test
-  fun releasingPendingWorkCancelsAnAlreadyArmedHdrRestore() {
-    val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
-    val manager = buildManager(activity)
-    applyPreferredMode(activity, 4)
-    manager.clearVideoFrameRate(hdrActive = true)
-    manager.releasePending()
-    shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(2))
-    assertEquals(4, preferredModeId(activity))
-  }
 }

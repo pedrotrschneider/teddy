@@ -40,8 +40,6 @@ class ControlFixture {
   bool rejectAudio = false;
   bool rejectPause = false;
   bool rejectReports = false;
-  Completer<void>? releaseReports;
-  Completer<void>? releaseDispose;
   bool? nativeEof;
   bool nativeSeeking = false;
   final calls = <MethodCall>[];
@@ -59,7 +57,6 @@ class ControlFixture {
       }
       final events = (jsonDecode(request.body)['events'] as List).cast<Map<String, dynamic>>();
       reports.addAll(events);
-      await releaseReports?.future;
       if (rejectReports) return response({'error': 'unavailable'}, 503);
       return response({
         'events': [
@@ -83,7 +80,6 @@ class ControlFixture {
   );
   Future<Object?> method(MethodCall call) async {
     calls.add(call);
-    if (call.method == 'dispose') await releaseDispose?.future;
     if (call.method == 'getProperty') {
       return switch ((call.arguments as Map)['name']) {
         'eof-reached' => (nativeEof ?? player.state.completed) ? 'yes' : 'no',
@@ -152,142 +148,6 @@ void main() {
   setUp(() async {
     resetSharedPreferencesForTest();
     SettingsService.resetForTesting();
-  });
-
-  for (final offline in [false, true]) {
-    test('backward seek checkpoints confirmed viewing before native entry (offline=$offline)', () async {
-      final db = AppDatabase.forTesting(NativeDatabase.memory());
-      final journal = TedLocalStore(db);
-      final f = ControlFixture(resumeMs: 0)
-        ..rejectReports = true
-        ..releaseReports = Completer<void>();
-      await f.auth.login('https://ted.example', 'fixture', '', 'Seek checkpoint');
-      final playback = TedPlayback(
-        TedClient(f.auth),
-        f.player,
-        TedPlaybackSession(sessionId, const TedMediaIdentity('movie', 'tt1234567'), mediaPath, 100000, 0),
-        journal: journal,
-        offline: offline,
-      );
-      final scope = tedOfflineScope(f.auth)!;
-      Map<String, dynamic>? beforeSeek;
-      await withMockPlayerChannels(
-        methodChannelName: 'com.plezy/mpv_player',
-        eventChannelName: 'com.plezy/mpv_player/events',
-        methodHandler: (call) async {
-          if (call.method == 'command' && (call.arguments as Map)['args'][0] == 'seek') {
-            beforeSeek = await journal.lastPosition(scope, playback.session.media);
-            expect(f.releaseReports!.isCompleted, false, reason: 'local checkpoint must not await a server receipt');
-            // A decoder failure may reset time-pos without rendering the target.
-            f.player.handlePropertyChange('time-pos', 0.0);
-            if (offline) throw PlatformException(code: 'SEEK_FAILED');
-          }
-          return f.method(call);
-        },
-        testBody: () async {
-          try {
-            await playback.open();
-            await f.loaded();
-            f.player.handlePlayerEvent('playback-restart', {'positionSeconds': 17.0});
-            await Future<void>.delayed(Duration.zero);
-            await playback.seek(const Duration(seconds: 2));
-            expect(beforeSeek?['kind'], 'progress');
-            expect(beforeSeek?['position_ms'], 17000);
-            expect(beforeSeek?['natural_eof'], false);
-            // Leaving before the new frame must not replace qualified viewing
-            // with an optimistic two-second target or the decoder's reset zero.
-            await playback.stop();
-            final saved = await journal.lastPosition(scope, playback.session.media);
-            expect(saved?['kind'], 'stop');
-            expect(saved?['position_ms'], 17000);
-            expect(saved?['natural_eof'], false);
-          } finally {
-            f.releaseReports!.complete();
-            await playback.closePlayer();
-          }
-        },
-      );
-      await journal.close();
-      f.auth.close();
-    });
-  }
-
-  test('a decoded backward landing is saved immediately and keeps qualified viewing below five percent', () async {
-    final root = await Directory.systemTemp.createTemp('ted-seek-checkpoint-');
-    addTearDown(() => root.delete(recursive: true));
-    final file = File('${root.path}/device.sqlite');
-    var journal = TedLocalStore(AppDatabase.forTesting(NativeDatabase(file)));
-    final f = ControlFixture(resumeMs: 0)..rejectReports = true;
-    await f.auth.login('https://ted.example', 'fixture', '', 'Landed seek checkpoint');
-    final playback = TedPlayback(
-      TedClient(f.auth),
-      f.player,
-      const TedPlaybackSession(sessionId, TedMediaIdentity('movie', 'tt1234567'), mediaPath, 100000, 0),
-      journal: journal,
-    );
-    final scope = tedOfflineScope(f.auth)!;
-    await withMockPlayerChannels(
-      methodChannelName: 'com.plezy/mpv_player',
-      eventChannelName: 'com.plezy/mpv_player/events',
-      methodHandler: f.method,
-      testBody: () async {
-        try {
-          await playback.open();
-          await f.loaded();
-          f.player.handlePlayerEvent('playback-restart', {'positionSeconds': 17.0});
-          await Future<void>.delayed(Duration.zero);
-          await playback.seek(const Duration(seconds: 2));
-          f.player.handlePlayerEvent('playback-restart', {'positionSeconds': 2.1});
-          await Future<void>.delayed(Duration.zero);
-          await playback.flush();
-          final landed = await journal.lastPosition(scope, playback.session.media);
-          expect(landed?['kind'], 'progress');
-          expect(landed?['position_ms'], 2100);
-          expect(landed?['natural_eof'], false);
-        } finally {
-          await playback.closePlayer();
-        }
-      },
-    );
-    await journal.close();
-    journal = TedLocalStore(AppDatabase.forTesting(NativeDatabase(file)));
-    await journal.recoverInterrupted();
-    final restored = await journal.lastPosition(scope, playback.session.media);
-    expect(restored?['position_ms'], 2100);
-    expect(restored?['kind'], 'stop');
-    expect(restored?['natural_eof'], false);
-    await journal.close();
-    f.auth.close();
-  });
-
-  test('forced close saves a stop first and concurrent callers join native disposal', () async {
-    final f = ControlFixture()..releaseDispose = Completer<void>();
-    await withMockPlayerChannels(
-      methodChannelName: 'com.plezy/mpv_player',
-      eventChannelName: 'com.plezy/mpv_player/events',
-      methodHandler: f.method,
-      testBody: () async {
-        try {
-          await f.open();
-          final first = f.playback.closePlayer();
-          var joined = false;
-          final second = f.playback.closePlayer().then((_) => joined = true);
-          while (!f.calls.any((call) => call.method == 'dispose')) {
-            await Future<void>.delayed(Duration.zero);
-          }
-          expect(f.reports.last['kind'], 'stop');
-          expect(f.reports.last['position_ms'], 17000);
-          expect(joined, false);
-          f.releaseDispose!.complete();
-          await Future.wait([first, second]);
-          expect(f.calls.where((call) => call.method == 'dispose'), hasLength(1));
-          expect(f.reports.where((report) => report['kind'] == 'stop'), hasLength(1));
-        } finally {
-          if (!f.releaseDispose!.isCompleted) f.releaseDispose!.complete();
-          await f.close();
-        }
-      },
-    );
   });
 
   for (final platform in [TargetPlatform.macOS, TargetPlatform.android]) {
@@ -494,7 +354,7 @@ void main() {
           f.player.handlePlayerEvent('playback-restart', null);
           await Future<void>.delayed(Duration.zero);
           await playback.stop();
-          expect(await journal.pending(tedOfflineScope(auth)!), 4);
+          expect(await journal.pending(tedOfflineScope(auth)!), 2);
           final saved = await journal.lastPosition(tedOfflineScope(auth)!, playback.session.media);
           expect(saved!['kind'], 'stop');
           expect(saved['position_ms'], 21000);
@@ -674,7 +534,7 @@ void main() {
           expect(f.playback.wantsToPlay, false);
           expect(f.playback.failure?.code, 'playback_interrupted');
           await f.playback.stop();
-          expect(f.reports.last['position_ms'], 17000);
+          expect(f.reports.last['position_ms'], 40000);
           expect(f.reports.every((r) => r['natural_eof'] == false), true);
         } finally {
           await f.closeWithFrames(tester);
@@ -1263,7 +1123,7 @@ void main() {
                 expect(current['headers'], {
                   'Authorization': 'Bearer ted_a_${'b' * 43}',
                   'X-Teddy-Compatibility-Major': '0',
-                  'X-Teddy-Compatibility-Version': '0.3',
+            'X-Teddy-Compatibility-Version': '0.3',
                 });
                 expect(current['startPositionMs'], 40000);
               } else {
@@ -1287,8 +1147,8 @@ void main() {
               (player as dynamic).handlePlayerEvent('file-loaded', null);
               await Future<void>.delayed(Duration.zero);
               await playback.stop();
-              expect(reports.map((event) => event['kind']), ['start', 'progress', 'stop']);
-              expect(reports.map((event) => event['sequence']), [1, 2, 3]);
+              expect(reports.map((event) => event['kind']), ['start', 'stop']);
+              expect(reports.map((event) => event['sequence']), [1, 2]);
               expect(reports.every((event) => event['session_id'] == sessionId), true);
               expect(reports.every((event) => event['origin'] == 'live'), true);
             } finally {

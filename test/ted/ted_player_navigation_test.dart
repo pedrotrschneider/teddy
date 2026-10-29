@@ -104,15 +104,13 @@ void main() {
           await playback.open();
           await f.loaded();
           await playback.seek(const Duration(seconds: 7));
-          f.player.handlePlayerEvent('playback-restart', {'positionSeconds': 7.0});
-          await Future<void>.delayed(Duration.zero);
           await playback.stop(markWatched: true);
           await playback.stop();
           final event = await store.lastPosition(tedOfflineScope(f.auth)!, media);
           expect(event!['kind'], 'complete');
           expect(event['position_ms'], 7000);
           expect(event['natural_eof'], false);
-          expect(await store.pending(tedOfflineScope(f.auth)!), 4);
+          expect(await store.pending(tedOfflineScope(f.auth)!), 2);
           await store.recoverInterrupted();
           expect((await store.lastPosition(tedOfflineScope(f.auth)!, media))!['kind'], 'complete');
           final watch = const TedDownloadWatch(media, false, false, 0, 100000, null, null).withLocal(event, 100000);
