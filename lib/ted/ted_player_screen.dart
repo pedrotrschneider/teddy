@@ -211,11 +211,11 @@ class _TeddyPlayerState extends State<TeddyPlayer> {
         !_exiting &&
         !_canExit) {
       final autoplay = prefs.SettingsService.instance.read(prefs.SettingsService.teddyAutoPlayNextEpisode);
-      unawaited(_exit(action: autoplay ? TedPlayerAction.completed : TedPlayerAction.back));
+      unawaited(_exit(action: autoplay ? TedPlayerAction.completed : TedPlayerAction.back, reason: 'natural_eof'));
     }
   }
 
-  Future<void> _exit({TedPlayerAction action = TedPlayerAction.back}) async {
+  Future<void> _exit({TedPlayerAction action = TedPlayerAction.back, String reason = 'user_navigation'}) async {
     if (_exiting) return;
     setState(() {
       _exiting = true;
@@ -243,7 +243,7 @@ class _TeddyPlayerState extends State<TeddyPlayer> {
         _canExit = true;
       });
       appLogger.i(
-        'TED player exit: action=${action.name} backend=${_playback.player.playerType} phase=returning_to_details',
+        'TED player exit: action=${action.name} backend=${_playback.player.playerType} phase=returning_to_details reason=$reason',
       );
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
@@ -264,7 +264,7 @@ class _TeddyPlayerState extends State<TeddyPlayer> {
   Future<void> _finishCredits() async {
     await _playback.stop(markWatched: true);
     final autoplay = prefs.SettingsService.instance.read(prefs.SettingsService.teddyAutoPlayNextEpisode);
-    await _exit(action: autoplay ? TedPlayerAction.completed : TedPlayerAction.back);
+    await _exit(action: autoplay ? TedPlayerAction.completed : TedPlayerAction.back, reason: 'credits_skipped');
   }
 
   Future<void> _signInAgain() async {

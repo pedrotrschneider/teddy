@@ -69,6 +69,13 @@ class TedPlayback extends ChangeNotifier {
   double _rate = 1;
   bool _wantsToPlay = true;
   int _controlsPending = 0;
+  int _pendingSeekRequests = 0;
+  Map<String, String>? _mediaHeaders;
+  DateTime? _mediaOpenedAt;
+  DateTime? _pausedAt;
+  // TED bounds blocked media writes at 30 seconds. Once a pause can leave
+  // that connection idle, replace it before playback consumes its old cache.
+  static const _resumeConnectionIdle = Duration(seconds: 20);
   TedFailure? _playerFailure;
   TedFailure? _syncFailure;
   TedFailure? get failure => _syncFailure ?? (_recovery == null ? _playerFailure : null);
@@ -77,7 +84,12 @@ class TedPlayback extends ChangeNotifier {
       !_closed &&
       !_stopping &&
       _playerFailure == null &&
-      (!_ready || _openingPosition != null || _seekTarget != null || _recovery != null || player.state.buffering);
+      (!_ready ||
+          _pendingSeekRequests > 0 ||
+          _openingPosition != null ||
+          _seekTarget != null ||
+          _recovery != null ||
+          player.state.buffering);
   bool get controlsBusy => _controlsPending > 0 || _recovery != null;
   bool get wantsToPlay => _wantsToPlay;
   bool get completedNaturally => _completionObserved;
@@ -122,7 +134,9 @@ class TedPlayback extends ChangeNotifier {
         // loaded. These transport zeros are not legitimate resume reports.
         // A time-pos notification can be an optimistic target or the last
         // demuxer timestamp at EOF. Only playback-restart confirms a landing.
-        if (_seekTarget != null || _openingPosition != null || player.state.completed) return;
+        if (_pendingSeekRequests > 0 || _seekTarget != null || _openingPosition != null || player.state.completed) {
+          return;
+        }
         _position = position;
         _confirmedPosition = position;
         timelinePosition.value = position;
@@ -172,6 +186,9 @@ class TedPlayback extends ChangeNotifier {
     _subscriptions.add(
       player.streams.playbackRestart.listen((_) {
         if (_closed || _stopping) return;
+        // A queued seek has not entered native code yet. An outgoing frame
+        // cannot confirm that request or release its EOF fence.
+        if (_pendingSeekRequests > 0 && _seekTarget == null && _openingPosition == null) return;
         _reconnectsWithoutFrame = 0;
         if (!_seekHasLanded()) return;
         final landedSeek = _seekTarget != null;
@@ -186,7 +203,7 @@ class TedPlayback extends ChangeNotifier {
         _openingPosition = null;
         _landingWatchdog?.cancel();
         _pendingEnd?.cancel();
-        _capturePosition();
+        _capturePosition(decodedLanding: true);
         if (landedSeek) {
           _diagnostic('seek_landed');
           _record('progress');
@@ -226,7 +243,12 @@ class TedPlayback extends ChangeNotifier {
     _progress = Timer.periodic(const Duration(seconds: 15), (_) {
       if (!_ready || _stopping || _closed || _playerFailure != null) return;
       _record('progress');
-      if (!_wantsToPlay || _seekTarget != null || _openingPosition != null || _recovery != null) {
+      if (!_wantsToPlay ||
+          _controlsPending > 0 ||
+          _pendingSeekRequests > 0 ||
+          _seekTarget != null ||
+          _openingPosition != null ||
+          _recovery != null) {
         _idleProgressTicks = 0;
       } else if (_position != _lastProgressPosition) {
         _idleProgressTicks = 0;
@@ -283,9 +305,9 @@ class TedPlayback extends ChangeNotifier {
     }
   }
 
-  Future<void> _openAt(Duration position, {required bool play}) async {
+  Future<void> _openAt(Duration position, {required bool play, bool seekRequested = false}) async {
     if (_closed || _stopping) return;
-    _seekTarget = null;
+    _seekTarget = seekRequested ? position : null;
     _openingPosition = position;
     _startup
       ..reset()
@@ -330,13 +352,19 @@ class TedPlayback extends ChangeNotifier {
       externalSubtitles: sidecars,
       timelineDuration: session.durationMs > 0 ? Duration(milliseconds: session.durationMs) : null,
     );
+    _mediaHeaders = Map<String, String>.unmodifiable(headers);
+    _mediaOpenedAt = client.auth.now();
     _watchLanding();
     _position = position;
     await player.setRate(_rate);
   }
 
-  bool _capturePosition() {
-    if (_seekTarget != null || _openingPosition != null) return false;
+  bool _capturePosition({bool decodedLanding = false}) {
+    if (_seekTarget != null ||
+        _openingPosition != null ||
+        !decodedLanding && (_pendingSeekRequests > 0 || player.state.completed)) {
+      return false;
+    }
     final actual = player.decodedPosition;
     _position = actual;
     _confirmedPosition = actual;
@@ -368,12 +396,13 @@ class TedPlayback extends ChangeNotifier {
     'playback_interrupted',
   }.contains(failure.code);
 
-  void _diagnostic(String phase, {String? code, int? httpStatus, int? targetMs}) {
+  void _diagnostic(String phase, {String? code, int? httpStatus, int? targetMs, String? reason}) {
     final message =
         'TED playback: phase=$phase backend=${player.playerType} media=${session.media.kind}/${session.media.id} '
         'session=${session.id} position_ms=$positionMs attempt=$_automaticRestarts '
-        'code=${code ?? "none"} http_status=${httpStatus ?? 0}'
-        '${targetMs == null ? "" : " target_ms=$targetMs"}';
+        'code=${code ?? "none"} http_status=${httpStatus ?? 0} duration_ms=$durationMs queued_seeks=$_pendingSeekRequests'
+        '${targetMs == null ? "" : " target_ms=$targetMs"}'
+        '${reason == null ? "" : " reason=$reason"}';
     if (code == null) {
       appLogger.i(message);
     } else {
@@ -419,6 +448,7 @@ class TedPlayback extends ChangeNotifier {
         _playerFailure != null ||
         _durationRejected ||
         _recovery != null ||
+        _pendingSeekRequests > 0 ||
         generation != _playheadGeneration) {
       return;
     }
@@ -433,16 +463,29 @@ class TedPlayback extends ChangeNotifier {
         player.getProperty('time-pos'),
         player.getProperty('duration'),
       ]);
-      if (_closed || _stopping || _recovery != null || generation != _playheadGeneration) return;
+      if (_closed || _stopping || _recovery != null || _pendingSeekRequests > 0 || generation != _playheadGeneration) {
+        return;
+      }
       if (values[0] != 'yes' && values[0] != 'true' || values[1] == 'yes' || values[1] == 'true') return;
       if (_seekTarget != null || _openingPosition != null || !player.state.hasRenderedFrame) {
         _recoverInterrupted();
         return;
       }
-      if (player.state.buffering || !_capturePosition()) return;
+      if (player.state.buffering) return;
       final nativePosition = double.tryParse(values[2] ?? '');
       if (nativePosition == null || !nativePosition.isFinite || nativePosition < 0 || nativePosition > 604800) return;
-      _position = Duration(milliseconds: (nativePosition * 1000).round());
+      final endPosition = Duration(milliseconds: (nativePosition * 1000).round());
+      // A demuxer/HTTP failure may expose the end timestamp without decoding
+      // there. It is not permission to replace retained viewing or pop the
+      // route. Require the EOF read to agree with the observed playhead.
+      if ((endPosition - _confirmedPosition).abs() > const Duration(seconds: 2)) {
+        _position = _confirmedPosition;
+        _diagnostic('eof_rejected', code: 'playhead_mismatch', targetMs: endPosition.inMilliseconds);
+        _record('progress');
+        _recoverInterrupted(reason: 'unexpected_eof');
+        return;
+      }
+      _position = endPosition;
       final nativeDuration = double.tryParse(values[3] ?? '');
       if (durationMs == 0 && nativeDuration != null && nativeDuration.isFinite && nativeDuration > 0) {
         _learnedDurationMs = (nativeDuration * 1000).round().clamp(0, 604800000);
@@ -455,6 +498,7 @@ class TedPlayback extends ChangeNotifier {
         _recoverInterrupted();
         return;
       }
+      _diagnostic('eof_confirmed');
       _completionObserved = true;
       unawaited(stop(naturalEof: true).catchError((Object _) {}));
     } catch (_) {
@@ -531,6 +575,7 @@ class TedPlayback extends ChangeNotifier {
     Future<void> Function() work, {
     String failureCode = 'playback_failed',
     bool clearTrackFailure = false,
+    bool recoverOnFailure = false,
   }) async {
     if (_closed || _stopping) return;
     _controlsPending++;
@@ -546,9 +591,11 @@ class TedPlayback extends ChangeNotifier {
       } on TedFailure catch (error) {
         _playerFailure = error;
         _diagnostic('control_failed', code: error.code);
+        if (recoverOnFailure && _retryable(error)) _recoverInterrupted(reason: 'control_failed');
       } catch (_) {
         _playerFailure = TedFailure(failureCode);
         _diagnostic('control_failed', code: failureCode);
+        if (recoverOnFailure && _retryable(_playerFailure!)) _recoverInterrupted(reason: 'control_failed');
       }
     });
     _controls = operation;
@@ -565,10 +612,9 @@ class TedPlayback extends ChangeNotifier {
       if (tedOfflineScope(client.auth) != scope) throw const TedFailure('sign_in_required');
       return !_closed && !_stopping;
     }
-    // Pause/seek/track commands act on the existing decoder and its read-ahead.
-    // Rotating an API bearer is not a reason to reload that decoder. Future
-    // media requests still carry the original token and TED enforces expiry;
-    // an actual 401 triggers the bounded reconnect below at the retained offset.
+    // Track/rate changes can keep the existing decoder and its read-ahead.
+    // Resume and seek additionally compare the stream's original headers
+    // below, before a new range request can use an expired access token.
     if (client.auth.server != server || client.auth.userId != userId || !client.auth.signedIn) {
       throw const TedFailure('sign_in_required');
     }
@@ -657,42 +703,102 @@ class TedPlayback extends ChangeNotifier {
     _lastProgressPosition = _position;
     if (await _ensureCurrentHeaders()) {
       if (_wantsToPlay) {
-        await player.play();
+        final headers = offline ? null : await client.auth.headers();
+        if (!await _ensureCurrentHeaders()) return;
+        if (headers != null && _connectionNeedsRefresh(headers)) {
+          _capturePosition();
+          final offset = _seekTarget ?? _openingPosition ?? _position;
+          if (_ready) {
+            _record('progress');
+            if (journal != null) await flush();
+          }
+          if (!await _ensureCurrentHeaders()) return;
+          _diagnostic(
+            'resume_reconnect',
+            targetMs: offset.inMilliseconds,
+            reason: mapEquals(headers, _mediaHeaders) ? 'paused_connection_idle' : 'stream_credentials_changed',
+          );
+          await _openAt(offset, play: true, seekRequested: _seekTarget != null);
+        } else {
+          await player.play();
+        }
+        _pausedAt = null;
       } else {
+        _pausedAt ??= client.auth.now();
         await player.pause();
       }
     }
-  });
+  }, recoverOnFailure: true);
 
-  Future<void> seek(Duration position) => _control(() async {
-    position = Duration(milliseconds: position.inMilliseconds.clamp(0, durationMs > 0 ? durationMs : 604800000));
-    if (await _ensureCurrentHeaders()) {
-      // A native decoder crash cannot execute stop(). Commit the observed
-      // offset before entering the seek, without waiting on network delivery.
-      if (_ready) {
-        _record('progress');
-        if (journal != null) await flush();
-      }
-      _diagnostic('seek_requested', targetMs: position.inMilliseconds);
-      _position = position;
-      _openingPosition = position;
-      _seekTarget = position;
-      _playheadGeneration++;
-      _pendingEnd?.cancel();
-      _watchLanding();
-      timelinePosition.value = position;
-      notifyListeners();
-      try {
-        await player.seek(position);
-      } catch (_) {
-        // A rejected command may leave a reset/transient native timestamp.
-        // Keep the confirmed checkpoint and let a decoded landing or the
-        // bounded recovery watchdog establish the playhead again.
-        _diagnostic('seek_failed', code: 'playback_failed', targetMs: position.inMilliseconds);
-        rethrow;
+  bool _connectionNeedsRefresh(Map<String, String> headers) {
+    final original = _mediaHeaders;
+    if (original == null) return false;
+    if (!mapEquals(original, headers)) return true;
+    final paused = _pausedAt;
+    if (paused == null) return false;
+    // A paused seek/reconnect may already have replaced the connection. Reuse
+    // it for the following Play rather than loading the same file twice.
+    final opened = _mediaOpenedAt;
+    final since = opened != null && opened.isAfter(paused) ? opened : paused;
+    final idle = client.auth.now().difference(since);
+    return idle.isNegative || idle >= _resumeConnectionIdle;
+  }
+
+  Future<void> seek(Duration position) async {
+    if (_closed || _stopping) return;
+    _capturePosition();
+    _pendingSeekRequests++;
+    _playheadGeneration++;
+    _pendingEnd?.cancel();
+    try {
+      await _control(() async {
+        position = Duration(milliseconds: position.inMilliseconds.clamp(0, durationMs > 0 ? durationMs : 604800000));
+        if (await _ensureCurrentHeaders()) {
+          // A native decoder crash cannot execute stop(). Commit the observed
+          // offset before entering the seek, without waiting on network delivery.
+          if (_ready) {
+            _record('progress');
+            if (journal != null) await flush();
+          }
+          final headers = offline ? null : await client.auth.headers();
+          if (!await _ensureCurrentHeaders()) return;
+          _diagnostic('seek_requested', targetMs: position.inMilliseconds);
+          if (headers != null && _connectionNeedsRefresh(headers)) {
+            _diagnostic(
+              'seek_reconnect',
+              targetMs: position.inMilliseconds,
+              reason: mapEquals(headers, _mediaHeaders) ? 'paused_connection_idle' : 'stream_credentials_changed',
+            );
+            await _openAt(position, play: _wantsToPlay, seekRequested: true);
+            return;
+          }
+          _position = position;
+          _openingPosition = position;
+          _seekTarget = position;
+          _playheadGeneration++;
+          _pendingEnd?.cancel();
+          _watchLanding();
+          timelinePosition.value = position;
+          notifyListeners();
+          try {
+            await player.seek(position);
+          } catch (_) {
+            // A rejected command may leave a reset/transient native timestamp.
+            // Keep the confirmed checkpoint and let a decoded landing or the
+            // bounded recovery watchdog establish the playhead again.
+            _diagnostic('seek_failed', code: 'playback_failed', targetMs: position.inMilliseconds);
+            rethrow;
+          }
+        }
+      }, recoverOnFailure: true);
+    } finally {
+      _pendingSeekRequests--;
+      if (!_closed) notifyListeners();
+      if (!_closed && !_stopping && _pendingSeekRequests == 0 && player.state.completed) {
+        unawaited(_checkEnd(_playheadGeneration));
       }
     }
-  });
+  }
 
   Future<void> reconnect({bool refreshAccess = false}) {
     if (_recovery != null) return _recovery!;
@@ -702,8 +808,6 @@ class TedPlayback extends ChangeNotifier {
       notifyListeners();
       return Future<void>.value();
     }
-    if (player.currentPosition > Duration.zero || _position == Duration.zero) _capturePosition();
-    final offset = _position;
     _playerFailure = null;
     _recoveryError = null;
     late final Future<void> operation;
@@ -717,8 +821,10 @@ class TedPlayback extends ChangeNotifier {
             }
           }
           if (!_closed && !_stopping) {
+            if (player.currentPosition > Duration.zero || _position == Duration.zero) _capturePosition();
+            final offset = _seekTarget ?? _openingPosition ?? _position;
             _recoveringOpen = true;
-            await _openAt(offset, play: _wantsToPlay);
+            await _openAt(offset, play: _wantsToPlay, seekRequested: _seekTarget != null);
           }
         }).whenComplete(() {
           _recoveringOpen = false;

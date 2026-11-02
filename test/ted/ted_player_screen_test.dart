@@ -190,6 +190,44 @@ void main() {
         },
       );
 
+  testWidgets('an inconsistent EOF stays on the player and only a decoded genuine end returns to details', (
+    tester,
+  ) async {
+    final f = ControlFixture();
+    lastExit = null;
+    await playerTest(tester, f, () async {
+      await mount(tester, f);
+      f.nativePosition = 100;
+      f.nativeEof = true;
+      f.player.handlePropertyChange('eof-reached', true);
+      // Observe the held replacement before supplying its decoded frame.
+      // pumpAndSettle would advance the pulsing loader through its watchdogs.
+      for (var i = 0; i < 20; i++) {
+        await tester.pump();
+        await tester.runAsync(() => Future<void>.delayed(Duration.zero));
+      }
+      expect(find.byType(TeddyPlayer), findsOneWidget);
+      expect(lastExit, isNull);
+      final loads = f.calls.where(
+        (call) => call.method == 'command' && (call.arguments as Map)['args'][0] == 'loadfile',
+      );
+      expect(loads, hasLength(2));
+      expect(f.reports.where((report) => report['natural_eof'] == true), isEmpty);
+
+      f.nativePosition = null;
+      f.nativeEof = false;
+      await f.loaded();
+      await settlePlayer(tester);
+      f.player.handlePlayerEvent('playback-restart', {'positionSeconds': 100.0});
+      f.nativeEof = true;
+      f.player.handlePropertyChange('eof-reached', true);
+      await settlePlayer(tester);
+      expect(find.byType(TeddyPlayer), findsNothing);
+      expect(lastExit?.action, TedPlayerAction.back);
+      expect(f.reports.last['natural_eof'], true);
+    });
+  });
+
   for (final autoplay in [false, true]) {
     testWidgets(
       'natural completion ${autoplay ? 'advances' : 'returns to the current episode'} according to Settings',

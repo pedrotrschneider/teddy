@@ -151,12 +151,15 @@ void main() {
     addTearDown(db.close);
     final store = TedLocalStore(db);
     var rotations = 0;
+    final credentialStore = MemoryStore();
     final auth = TedAuth(
-      store: MemoryStore(),
+      store: credentialStore,
       client: MockClient((r) async {
         if (r.url.path.endsWith('/refresh')) {
           rotations++;
-          return response(pair(DateTime.now(), suffix: 'b'));
+          return response(
+            pair(DateTime.now(), suffix: 'b', familyExpiresAt: credentialStore.saved!.tokens.familyExpiresAt),
+          );
         }
         return response(pair(DateTime.now()));
       }),

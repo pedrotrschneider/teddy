@@ -44,10 +44,12 @@ class ControlFixture {
   Completer<void>? releaseDispose;
   bool? nativeEof;
   bool nativeSeeking = false;
+  double? nativePosition;
   final calls = <MethodCall>[];
   final reports = <Map<String, dynamic>>[];
+  final credentialStore = MemoryStore();
   late final auth = TedAuth(
-    store: MemoryStore(),
+    store: credentialStore,
     now: () => now,
     client: MockClient((request) async {
       if (request.url.path.endsWith('/login')) return response(pair(now));
@@ -55,7 +57,13 @@ class ControlFixture {
         rotations++;
         if (!refreshEntered.isCompleted) refreshEntered.complete();
         if (releaseRefresh != null) await releaseRefresh!.future;
-        return response(pair(now, suffix: String.fromCharCode(97 + rotations)));
+        return response(
+          pair(
+            now,
+            suffix: String.fromCharCode(97 + rotations),
+            familyExpiresAt: credentialStore.saved!.tokens.familyExpiresAt,
+          ),
+        );
       }
       final events = (jsonDecode(request.body)['events'] as List).cast<Map<String, dynamic>>();
       reports.addAll(events);
@@ -88,7 +96,7 @@ class ControlFixture {
       return switch ((call.arguments as Map)['name']) {
         'eof-reached' => (nativeEof ?? player.state.completed) ? 'yes' : 'no',
         'seeking' => nativeSeeking ? 'yes' : 'no',
-        'time-pos' => (player.decodedPosition.inMilliseconds / 1000).toString(),
+        'time-pos' => (nativePosition ?? player.decodedPosition.inMilliseconds / 1000).toString(),
         'duration' => (player.state.duration.inMilliseconds / 1000).toString(),
         _ => null,
       };
@@ -108,6 +116,7 @@ class ControlFixture {
     await loaded();
     player.handlePropertyChange('pause', false);
     player.handlePropertyChange('time-pos', 17.0);
+    player.handlePlayerEvent('playback-restart', {'positionSeconds': 17.0});
     await Future<void>.value();
   }
 
@@ -597,7 +606,7 @@ void main() {
             f.player.handlePlayerEvent('playback-restart', null);
             await Future<void>.delayed(Duration.zero);
           }
-          f.player.handlePropertyChange('time-pos', 100.0);
+          f.player.handlePlayerEvent('playback-restart', {'positionSeconds': 100.0});
           f.player.handlePropertyChange('eof-reached', true);
           await Future<void>.delayed(Duration.zero);
           await f.playback.stop();
@@ -711,6 +720,7 @@ void main() {
           await tester.pump();
           expect(f.playback.completedNaturally, false);
           f.nativeSeeking = false;
+          f.player.handlePlayerEvent('playback-restart', {'positionSeconds': 100.0});
           f.player.handlePropertyChange('eof-reached', true);
           await tester.pump();
           await f.playback.stop();
@@ -786,7 +796,7 @@ void main() {
           f.player.handlePlayerEvent('playback-restart', {'positionSeconds': 40.0});
           await Future<void>.delayed(Duration.zero);
           expect(f.playback.completedNaturally, false);
-          f.player.handlePropertyChange('time-pos', 100.0);
+          f.player.handlePlayerEvent('playback-restart', {'positionSeconds': 100.0});
           f.player.handlePropertyChange('eof-reached', true);
           await Future<void>.delayed(Duration.zero);
           expect(f.playback.completedNaturally, true);
@@ -892,7 +902,7 @@ void main() {
           f.player.handlePlayerEvent('playback-restart', {'sourceId': 73, 'positionSeconds': 94.9});
           await Future<void>.delayed(Duration.zero);
           expect(f.playback.timelinePosition.value, const Duration(milliseconds: 94900));
-          f.player.handlePropertyChange('time-pos', 100.0, sourceId: 73);
+          f.player.handlePlayerEvent('playback-restart', {'sourceId': 73, 'positionSeconds': 100.0});
           f.player.handlePropertyChange('eof-reached', true);
           await Future<void>.delayed(Duration.zero);
           await f.playback.stop();
@@ -1197,14 +1207,15 @@ void main() {
         var now = DateTime.utc(2026, 10, 10);
         var rotations = 0;
         final reports = <Map<String, dynamic>>[];
+        final credentialStore = MemoryStore();
         final auth = TedAuth(
-          store: MemoryStore(),
+          store: credentialStore,
           now: () => now,
           client: MockClient((request) async {
             if (request.url.path.endsWith('/login')) return response(pair(now));
             if (request.url.path.endsWith('/refresh')) {
               rotations++;
-              return response(pair(now, suffix: 'b'));
+              return response(pair(now, suffix: 'b', familyExpiresAt: credentialStore.saved!.tokens.familyExpiresAt));
             }
             final events = (jsonDecode(request.body)['events'] as List).cast<Map<String, dynamic>>();
             reports.addAll(events);
@@ -1242,7 +1253,7 @@ void main() {
               await playback.flush();
               now = now.add(const Duration(minutes: 11));
               await playback.seek(const Duration(seconds: 40));
-              expect(rotations, 0, reason: 'a local control must not reopen on API token expiry');
+              expect(rotations, 1, reason: 'a seek must install fresh stream credentials before requesting ranges');
               expect(
                 calls
                     .where(
@@ -1251,13 +1262,20 @@ void main() {
                           call.method == 'command' && (call.arguments as Map)['args'][0] == 'loadfile',
                     )
                     .length,
-                1,
+                2,
+              );
+              expect(
+                calls.where(
+                  (call) =>
+                      call.method == 'seek' || call.method == 'command' && (call.arguments as Map)['args'][0] == 'seek',
+                ),
+                isEmpty,
               );
               await playback.reconnect();
               expect(rotations, 1);
               if (exo) {
                 final opens = calls.where((call) => call.method == 'open').toList();
-                expect(opens.length, 2);
+                expect(opens.length, 3);
                 final current = opens.last.arguments as Map;
                 expect(current['uri'], 'https://ted.example$mediaPath');
                 expect(current['headers'], {
@@ -1270,7 +1288,7 @@ void main() {
                 final loads = calls
                     .where((call) => call.method == 'command' && (call.arguments as Map)['args'][0] == 'loadfile')
                     .toList();
-                expect(loads.length, 2);
+                expect(loads.length, 3);
                 expect((loads.last.arguments as Map)['args'][1], 'https://ted.example$mediaPath');
                 final headers = calls
                     .where((call) => call.method == 'command' && (call.arguments as Map)['args'][0] == 'change-list')
@@ -1385,7 +1403,7 @@ void main() {
               .where((call) => call.method == 'setProperty' && (call.arguments as Map)['name'] == 'sid')
               .toList();
           expect((selections.last.arguments as Map)['value'], '2');
-          player.handlePropertyChange('time-pos', 120.0);
+          player.handlePlayerEvent('playback-restart', {'positionSeconds': 120.0});
           player.handlePropertyChange('eof-reached', true);
           await Future<void>.delayed(Duration.zero);
           await playback.stop();

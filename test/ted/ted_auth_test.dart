@@ -9,15 +9,21 @@ import 'package:plezy/ted/ted_credential_store.dart';
 import 'package:plezy/ted/ted_models.dart';
 
 const family = '11111111-1111-4111-8111-111111111111';
-Map<String, dynamic> pair(DateTime now, {String suffix = 'a', String familyId = family, int userId = 1}) => {
+Map<String, dynamic> pair(
+  DateTime now, {
+  String suffix = 'a',
+  String familyId = family,
+  int userId = 1,
+  DateTime? familyExpiresAt,
+}) => {
   'token_type': 'Bearer',
   'access_token': 'ted_a_${suffix * 43}',
   'refresh_token': 'ted_r_${suffix * 43}',
   'family_id': familyId,
   'expires_in': 600,
   'access_expires_at': now.add(const Duration(minutes: 10)).toIso8601String(),
-  'refresh_expires_at': DateTime.utc(2026, 10, 30).toIso8601String(),
-  'family_expires_at': DateTime.utc(2026, 12, 30).toIso8601String(),
+  'refresh_expires_at': now.add(const Duration(days: 30)).toIso8601String(),
+  'family_expires_at': (familyExpiresAt ?? now.add(const Duration(days: 90))).toIso8601String(),
   'user': {'id': userId, 'display_name': 'Fixture'},
 };
 
@@ -150,7 +156,7 @@ void main() {
           rotations++;
           entered.complete();
           await release.future;
-          return response(pair(now, suffix: 'b'));
+          return response(pair(now, suffix: 'b', familyExpiresAt: store.saved!.tokens.familyExpiresAt));
         }
         expect(request.headers['Authorization'], 'Bearer ted_a_${'b' * 43}');
         expect(store.saved!.refreshPending, false);

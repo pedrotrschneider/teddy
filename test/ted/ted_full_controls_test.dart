@@ -27,12 +27,21 @@ void main() {
           f.now = f.now.add(const Duration(minutes: 11));
           await f.playback.transport(TransportCommand.play);
           await f.loaded();
-          expect(f.rotations, 0);
+          expect(f.rotations, 1);
+          expect(
+            f.calls.where((c) => c.method == 'command' && (c.arguments as Map)['args'][0] == 'loadfile'),
+            hasLength(2),
+          );
           expect(f.playback.wantsToPlay, true);
           final speeds = f.calls.where((c) => c.method == 'setProperty' && (c.arguments as Map)['name'] == 'speed');
           expect((speeds.last.arguments as Map)['value'], '1.5');
           await f.playback.transport(TransportCommand.play);
           expect(f.playback.wantsToPlay, true);
+          expect(f.rotations, 1);
+          expect(
+            f.calls.where((c) => c.method == 'command' && (c.arguments as Map)['args'][0] == 'loadfile'),
+            hasLength(2),
+          );
           await f.playback.stop();
           expect(f.reports.where((e) => e['kind'] == 'start').length, 1);
           expect(f.reports.where((e) => e['kind'] == 'stop').length, 1);
