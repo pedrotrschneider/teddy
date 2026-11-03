@@ -11,6 +11,7 @@ import 'ted_client.dart';
 import 'ted_models.dart';
 import 'ted_local_store.dart';
 import 'ted_track_languages.dart';
+import 'ted_media_transport.dart';
 
 /// Coordinates native controls, durable live/offline viewing and bounded
 /// recovery of the same pinned playback session, without changing its source.
@@ -23,6 +24,7 @@ class TedPlayback extends ChangeNotifier {
   final TedLocalStore? journal;
   final bool offline;
   final List<SubtitleTrack> localSubtitles;
+  final TedMediaTransport? mediaTransport;
   final String? scope;
   final List<StreamSubscription<dynamic>> _subscriptions = [];
   final List<Map<String, dynamic>> _pending = [];
@@ -34,6 +36,7 @@ class TedPlayback extends ChangeNotifier {
   int _automaticRestarts = 0;
   Future<void>? _stop;
   Future<void>? _close;
+  Future<void>? _transportClosing;
   Timer? _progress;
   Timer? _landingWatchdog;
   Timer? _pendingEnd;
@@ -70,12 +73,6 @@ class TedPlayback extends ChangeNotifier {
   bool _wantsToPlay = true;
   int _controlsPending = 0;
   int _pendingSeekRequests = 0;
-  Map<String, String>? _mediaHeaders;
-  DateTime? _mediaOpenedAt;
-  DateTime? _pausedAt;
-  // TED bounds blocked media writes at 30 seconds. Once a pause can leave
-  // that connection idle, replace it before playback consumes its old cache.
-  static const _resumeConnectionIdle = Duration(seconds: 20);
   TedFailure? _playerFailure;
   TedFailure? _syncFailure;
   TedFailure? get failure => _syncFailure ?? (_recovery == null ? _playerFailure : null);
@@ -111,6 +108,7 @@ class TedPlayback extends ChangeNotifier {
     this.journal,
     this.offline = false,
     this.localSubtitles = const [],
+    this.mediaTransport,
   }) : server = client.auth.offlineServer ?? client.auth.server!,
        userId = client.auth.offlineUserId ?? client.auth.userId!,
        scope = tedOfflineScope(client.auth);
@@ -285,6 +283,12 @@ class TedPlayback extends ChangeNotifier {
         // after starvation. Keep the native cache budget and fill while playing.
         await player.setProperty('cache-pause-initial', 'no');
         await player.setProperty('cache-pause-wait', '0.5');
+        if (!offline) {
+          // The demuxer must keep filling its existing bounded cache even
+          // when playback is paused, including immediately after startup.
+          await player.setProperty('cache', 'yes');
+          await player.setProperty('demuxer-hysteresis-secs', '0');
+        }
       }
       if (journal != null && scope != null) _languages = await journal!.trackLanguages(scope!, session.media);
       if (_originalLanguage.isEmpty && !offline) unawaited(_loadOriginalLanguage());
@@ -341,19 +345,18 @@ class TedPlayback extends ChangeNotifier {
       throw const TedFailure('sign_in_required');
     }
     final headers = await client.auth.headers();
+    final uri = mediaTransport == null ? server.resolve(session.mediaPath) : await mediaTransport!.open();
     if (_closed || _stopping) return;
     if (client.auth.server != server || client.auth.userId != userId) {
       throw const TedFailure('sign_in_required');
     }
     _trackSignature = null;
     await player.open(
-      Media(server.resolve(session.mediaPath).toString(), headers: headers, start: position),
+      Media(uri.toString(), headers: headers, start: position),
       play: play,
       externalSubtitles: sidecars,
       timelineDuration: session.durationMs > 0 ? Duration(milliseconds: session.durationMs) : null,
     );
-    _mediaHeaders = Map<String, String>.unmodifiable(headers);
-    _mediaOpenedAt = client.auth.now();
     _watchLanding();
     _position = position;
     await player.setRate(_rate);
@@ -607,14 +610,13 @@ class TedPlayback extends ChangeNotifier {
     }
   }
 
-  Future<bool> _ensureCurrentHeaders() async {
+  Future<bool> _ensurePlaybackScope() async {
     if (offline) {
       if (tedOfflineScope(client.auth) != scope) throw const TedFailure('sign_in_required');
       return !_closed && !_stopping;
     }
-    // Track/rate changes can keep the existing decoder and its read-ahead.
-    // Resume and seek additionally compare the stream's original headers
-    // below, before a new range request can use an expired access token.
+    // The media transport owns rotating headers and byte-range recovery.
+    // Native controls retain the decoder and its read-ahead cache.
     if (client.auth.server != server || client.auth.userId != userId || !client.auth.signedIn) {
       throw const TedFailure('sign_in_required');
     }
@@ -627,7 +629,7 @@ class TedPlayback extends ChangeNotifier {
         throw const TedFailure('track_unavailable');
       }
       _audioId = track.id;
-      if (await _ensureCurrentHeaders()) {
+      if (await _ensurePlaybackScope()) {
         await player.selectAudioTrack(track);
         await _rememberLanguage(track.language, audio: true);
       }
@@ -650,7 +652,7 @@ class TedPlayback extends ChangeNotifier {
         'TED subtitles selected: backend=${player.playerType} session=${session.id} '
         'selected=${_safeCodec(track.id)} language=${tedLanguage(track.language)} codec=${_safeCodec(track.codec)}',
       );
-      if (await _ensureCurrentHeaders()) {
+      if (await _ensurePlaybackScope()) {
         await player.selectSubtitleTrack(track);
         await _rememberLanguage(track.language, audio: false);
       }
@@ -678,7 +680,7 @@ class TedPlayback extends ChangeNotifier {
         throw const TedFailure('track_unavailable');
       }
       _secondarySubtitleId = track.id;
-      if (await _ensureCurrentHeaders()) await player.selectSecondarySubtitleTrack(track);
+      if (await _ensurePlaybackScope()) await player.selectSecondarySubtitleTrack(track);
     },
     failureCode: 'track_unavailable',
     clearTrackFailure: true,
@@ -686,7 +688,7 @@ class TedPlayback extends ChangeNotifier {
 
   Future<void> setRate(double rate) => _control(() async {
     if (!rate.isFinite || rate < 0.25 || rate > 4) throw const TedFailure('playback_failed');
-    if (await _ensureCurrentHeaders()) {
+    if (await _ensurePlaybackScope()) {
       await player.setRate(rate);
       _rate = rate;
     }
@@ -694,6 +696,7 @@ class TedPlayback extends ChangeNotifier {
 
   Future<void> playOrPause() => transport(TransportCommand.toggle);
   Future<void> transport(TransportCommand command) => _control(() async {
+    final wasPlaying = _wantsToPlay;
     _wantsToPlay = switch (command) {
       TransportCommand.play => true,
       TransportCommand.pause => false,
@@ -701,48 +704,15 @@ class TedPlayback extends ChangeNotifier {
     };
     _idleProgressTicks = 0;
     _lastProgressPosition = _position;
-    if (await _ensureCurrentHeaders()) {
+    if (await _ensurePlaybackScope()) {
       if (_wantsToPlay) {
-        final headers = offline ? null : await client.auth.headers();
-        if (!await _ensureCurrentHeaders()) return;
-        if (headers != null && _connectionNeedsRefresh(headers)) {
-          _capturePosition();
-          final offset = _seekTarget ?? _openingPosition ?? _position;
-          if (_ready) {
-            _record('progress');
-            if (journal != null) await flush();
-          }
-          if (!await _ensureCurrentHeaders()) return;
-          _diagnostic(
-            'resume_reconnect',
-            targetMs: offset.inMilliseconds,
-            reason: mapEquals(headers, _mediaHeaders) ? 'paused_connection_idle' : 'stream_credentials_changed',
-          );
-          await _openAt(offset, play: true, seekRequested: _seekTarget != null);
-        } else {
-          await player.play();
-        }
-        _pausedAt = null;
+        if (!wasPlaying) mediaTransport?.resume();
+        await player.play();
       } else {
-        _pausedAt ??= client.auth.now();
         await player.pause();
       }
     }
   }, recoverOnFailure: true);
-
-  bool _connectionNeedsRefresh(Map<String, String> headers) {
-    final original = _mediaHeaders;
-    if (original == null) return false;
-    if (!mapEquals(original, headers)) return true;
-    final paused = _pausedAt;
-    if (paused == null) return false;
-    // A paused seek/reconnect may already have replaced the connection. Reuse
-    // it for the following Play rather than loading the same file twice.
-    final opened = _mediaOpenedAt;
-    final since = opened != null && opened.isAfter(paused) ? opened : paused;
-    final idle = client.auth.now().difference(since);
-    return idle.isNegative || idle >= _resumeConnectionIdle;
-  }
 
   Future<void> seek(Duration position) async {
     if (_closed || _stopping) return;
@@ -753,25 +723,15 @@ class TedPlayback extends ChangeNotifier {
     try {
       await _control(() async {
         position = Duration(milliseconds: position.inMilliseconds.clamp(0, durationMs > 0 ? durationMs : 604800000));
-        if (await _ensureCurrentHeaders()) {
+        if (await _ensurePlaybackScope()) {
           // A native decoder crash cannot execute stop(). Commit the observed
           // offset before entering the seek, without waiting on network delivery.
           if (_ready) {
             _record('progress');
             if (journal != null) await flush();
           }
-          final headers = offline ? null : await client.auth.headers();
-          if (!await _ensureCurrentHeaders()) return;
+          if (!await _ensurePlaybackScope()) return;
           _diagnostic('seek_requested', targetMs: position.inMilliseconds);
-          if (headers != null && _connectionNeedsRefresh(headers)) {
-            _diagnostic(
-              'seek_reconnect',
-              targetMs: position.inMilliseconds,
-              reason: mapEquals(headers, _mediaHeaders) ? 'paused_connection_idle' : 'stream_credentials_changed',
-            );
-            await _openAt(position, play: _wantsToPlay, seekRequested: true);
-            return;
-          }
           _position = position;
           _openingPosition = position;
           _seekTarget = position;
@@ -946,6 +906,9 @@ class TedPlayback extends ChangeNotifier {
     if (!_stopping) {
       _stopping = true;
       _wantsToPlay = false;
+      _transportClosing = mediaTransport?.close().catchError((Object _) {
+        _diagnostic('transport_close_failed', code: 'unavailable');
+      });
     }
     _stop =
         (() async {
@@ -993,7 +956,7 @@ class TedPlayback extends ChangeNotifier {
     }
     await _controls;
     _diagnostic('disposing_native');
-    await player.dispose();
+    await Future.wait([player.dispose(), ?_transportClosing]);
     _diagnostic('disposed');
     timelinePosition.dispose();
     dispose();

@@ -4,11 +4,12 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plezy/focus/transport_keys.dart';
 import 'package:plezy/services/settings_service.dart';
+import 'package:plezy/ted/ted_media_transport.dart';
 
 import '../test_helpers/mock_player_channels.dart';
 import '../test_helpers/prefs.dart';
 import '../test_helpers/subtitle_fonts.dart';
-import 'ted_playback_test.dart' show ControlFixture, mediaPath;
+import 'ted_playback_test.dart' show ControlFixture;
 
 Future<void> settlePlayback() async {
   for (var i = 0; i < 12; i++) {
@@ -23,6 +24,29 @@ String? latestStart(ControlFixture f) =>
     (f.calls.lastWhere((call) => call.method == 'setProperty' && (call.arguments as Map)['name'] == 'start').arguments
             as Map)['value']
         as String?;
+
+class HeldTransport implements TedMediaTransport {
+  final release = Completer<void>();
+  Completer<void>? releaseClose;
+  var resumes = 0;
+  var closes = 0;
+  var reconnecting = false;
+  @override
+  Future<Uri> open() async => Uri.parse('http://127.0.0.1:34821/fixture/media');
+  @override
+  void resume() {
+    resumes++;
+    reconnecting = true;
+    unawaited(release.future.then((_) => reconnecting = false));
+  }
+
+  @override
+  Future<void> close() async {
+    closes++;
+    if (!release.isCompleted) release.complete();
+    await releaseClose?.future;
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -188,9 +212,10 @@ void main() {
     );
   });
 
-  for (final resume in [false, true]) {
-    test('${resume ? 'resume' : 'backward seek'} replaces expired stream credentials before native playback', () async {
-      final f = ControlFixture();
+  for (final pausedSeconds in [2, 35, 660]) {
+    test('resume after $pausedSeconds seconds plays retained frames while transport recovery is held', () async {
+      final transport = HeldTransport();
+      final f = ControlFixture(mediaTransport: transport);
       await withMockPlayerChannels(
         methodChannelName: 'com.plezy/mpv_player',
         eventChannelName: 'com.plezy/mpv_player/events',
@@ -198,50 +223,42 @@ void main() {
         testBody: () async {
           try {
             await f.open();
-            f.player.handlePlayerEvent('playback-restart', {'positionSeconds': 17.0});
+            f.player.handlePropertyChange('demuxer-cache-state', {
+              'cache-end': 60.0,
+              'seekable-ranges': [
+                {'start': 0.0, 'end': 60.0},
+              ],
+            });
             await settlePlayback();
-            f.now = f.now.add(const Duration(minutes: 11));
-            if (resume) {
-              await f.playback.transport(TransportCommand.pause);
-              await f.playback.transport(TransportCommand.play);
-            } else {
-              await f.playback.seek(const Duration(seconds: 7));
-            }
-            expect(f.rotations, 1);
-            expect(mediaLoads(f), hasLength(2));
-            expect((mediaLoads(f).last.arguments as Map)['args'][1], 'https://ted.example$mediaPath');
-            expect(latestStart(f), resume ? '17.0' : '7.0');
-            expect(
-              f.calls.where((call) => call.method == 'command' && (call.arguments as Map)['args'][0] == 'seek'),
-              isEmpty,
-            );
-            final headers = await f.auth.headers();
-            final authorization = f.calls.lastWhere(
-              (call) =>
-                  call.method == 'command' &&
-                  (call.arguments as Map)['args'][0] == 'change-list' &&
-                  (call.arguments as Map)['args'][2] == 'append' &&
-                  ((call.arguments as Map)['args'][3] as String).startsWith('Authorization: '),
-            );
-            expect((authorization.arguments as Map)['args'][3], 'Authorization: ${headers['Authorization']}');
-            expect(f.playback.completedNaturally, false);
-            if (!resume) {
-              await f.loaded();
-              await settlePlayback();
-              await f.playback.flush();
-              expect(f.reports.last['kind'], 'progress');
-              expect(f.reports.last['position_ms'], 7000);
-            }
+            final cached = f.player.state.bufferRanges;
+            await f.playback.transport(TransportCommand.pause);
+            f.now = f.now.add(Duration(seconds: pausedSeconds));
+            await f.playback.transport(TransportCommand.play);
+            expect(transport.resumes, 1);
+            expect(transport.reconnecting, true);
+            expect(mediaLoads(f), hasLength(1));
+            expect(f.player.state.bufferRanges, cached);
+            expect(f.playback.loading, false);
+            expect(f.playback.wantsToPlay, true);
+            expect(f.playback.failure, isNull);
+            f.player.handlePlayerEvent('playback-restart', {'positionSeconds': 18.0});
+            await settlePlayback();
+            expect(f.playback.positionMs, 18000, reason: 'cached frames play before network recovery finishes');
+            await f.playback.transport(TransportCommand.play);
+            expect(transport.resumes, 1, reason: 'repeated Play is idempotent');
+            expect(mediaLoads(f), hasLength(1));
           } finally {
             await f.close();
           }
+          expect(transport.closes, 1);
         },
       );
     });
   }
 
-  test('resume refreshes an idle connection with unchanged credentials and preserves controls', () async {
-    final f = ControlFixture();
+  test('cache exhaustion during a background reconnect shows loading without leaving or reloading', () async {
+    final transport = HeldTransport();
+    final f = ControlFixture(mediaTransport: transport);
     await withMockPlayerChannels(
       methodChannelName: 'com.plezy/mpv_player',
       eventChannelName: 'com.plezy/mpv_player/events',
@@ -249,48 +266,21 @@ void main() {
       testBody: () async {
         try {
           await f.open();
-          f.player.handlePlayerEvent('playback-restart', {'positionSeconds': 17.0});
-          await settlePlayback();
-          await f.playback.selectAudioTrack(f.player.state.tracks.audio.last);
-          await f.playback.selectSubtitleTrack(f.player.state.tracks.subtitle.single);
-          await f.playback.setRate(1.5);
           await f.playback.transport(TransportCommand.pause);
-          f.now = f.now.add(const Duration(seconds: 35));
           await f.playback.transport(TransportCommand.play);
-          expect(f.rotations, 0);
-          expect(mediaLoads(f), hasLength(2));
-          expect(latestStart(f), '17.0');
-          expect(f.playback.wantsToPlay, true);
-          await f.loaded();
+          f.player.handlePropertyChange('paused-for-cache', true);
           await settlePlayback();
-          for (final entry in {'aid': '2', 'sid': '3', 'speed': '1.5'}.entries) {
-            final last = f.calls.lastWhere(
-              (call) => call.method == 'setProperty' && (call.arguments as Map)['name'] == entry.key,
-            );
-            expect((last.arguments as Map)['value'], entry.value);
-          }
+          expect(f.playback.loading, true);
+          expect(f.playback.completedNaturally, false);
           expect(f.playback.failure, isNull);
-        } finally {
-          await f.close();
-        }
-      },
-    );
-  });
-
-  test('a short pause with current credentials keeps the read-ahead buffer', () async {
-    final f = ControlFixture();
-    await withMockPlayerChannels(
-      methodChannelName: 'com.plezy/mpv_player',
-      eventChannelName: 'com.plezy/mpv_player/events',
-      methodHandler: f.method,
-      testBody: () async {
-        try {
-          await f.open();
-          await f.playback.transport(TransportCommand.pause);
-          f.now = f.now.add(const Duration(seconds: 2));
-          await f.playback.transport(TransportCommand.play);
           expect(mediaLoads(f), hasLength(1));
-          expect(f.rotations, 0);
+          transport.release.complete();
+          f.player.handlePropertyChange('paused-for-cache', false);
+          f.player.handlePlayerEvent('playback-restart', {'positionSeconds': 18.0});
+          await settlePlayback();
+          expect(f.playback.loading, false);
+          expect(f.playback.positionMs, 18000);
+          expect(f.reports.where((report) => report['natural_eof'] == true), isEmpty);
         } finally {
           await f.close();
         }
@@ -298,8 +288,9 @@ void main() {
     );
   });
 
-  test('a paused seek refreshing the connection is reused by the following resume', () async {
-    final f = ControlFixture();
+  test('stop saves viewing without waiting for network retirement and native close starts independently', () async {
+    final transport = HeldTransport()..releaseClose = Completer<void>();
+    final f = ControlFixture(mediaTransport: transport);
     await withMockPlayerChannels(
       methodChannelName: 'com.plezy/mpv_player',
       eventChannelName: 'com.plezy/mpv_player/events',
@@ -307,91 +298,20 @@ void main() {
       testBody: () async {
         try {
           await f.open();
-          await f.playback.transport(TransportCommand.pause);
-          f.now = f.now.add(const Duration(seconds: 35));
-          await f.playback.seek(const Duration(seconds: 7));
-          await f.playback.transport(TransportCommand.play);
-          expect(mediaLoads(f), hasLength(2));
-          expect(latestStart(f), '7.0');
-          expect(f.playback.wantsToPlay, true);
-          expect(f.playback.completedNaturally, false);
-        } finally {
-          await f.close();
-        }
-      },
-    );
-  });
-
-  test('stop during resume credential refresh prevents reopening or unpausing', () async {
-    final f = ControlFixture();
-    await withMockPlayerChannels(
-      methodChannelName: 'com.plezy/mpv_player',
-      eventChannelName: 'com.plezy/mpv_player/events',
-      methodHandler: f.method,
-      testBody: () async {
-        try {
-          await f.open();
-          f.player.handlePlayerEvent('playback-restart', {'positionSeconds': 17.0});
-          await settlePlayback();
-          await f.playback.transport(TransportCommand.pause);
-          f.now = f.now.add(const Duration(minutes: 11));
-          f.releaseRefresh = Completer<void>();
-          final resume = f.playback.transport(TransportCommand.play);
-          await settlePlayback();
-          expect(f.refreshEntered.isCompleted, true);
-          final stop = f.playback.stop();
-          f.releaseRefresh!.complete();
-          await Future.wait([resume, stop]);
-          expect(mediaLoads(f), hasLength(1));
-          expect(f.reports.where((report) => report['kind'] == 'stop'), hasLength(1));
-          expect(f.reports.last['position_ms'], 17000);
-          expect(f.reports.every((report) => report['natural_eof'] == false), true);
-        } finally {
-          if (f.releaseRefresh != null && !f.releaseRefresh!.isCompleted) f.releaseRefresh!.complete();
-          await f.close();
-        }
-      },
-    );
-  });
-
-  test('a failed proactive resume uses three bounded restarts and retains the selected file', () async {
-    final f = ControlFixture();
-    var rejectLoads = false;
-    await withMockPlayerChannels(
-      methodChannelName: 'com.plezy/mpv_player',
-      eventChannelName: 'com.plezy/mpv_player/events',
-      methodHandler: (call) async {
-        final result = await f.method(call);
-        if (rejectLoads && call.method == 'command' && (call.arguments as Map)['args'][0] == 'loadfile') {
-          throw PlatformException(code: 'LOAD_FAILED');
-        }
-        return result;
-      },
-      testBody: () async {
-        try {
-          await f.open();
-          f.player.handlePlayerEvent('playback-restart', {'positionSeconds': 17.0});
-          await settlePlayback();
-          await f.playback.transport(TransportCommand.pause);
-          f.now = f.now.add(const Duration(seconds: 35));
-          rejectLoads = true;
-          await f.playback.transport(TransportCommand.play);
-          for (var i = 0; i < 100 && f.playback.controlsBusy; i++) {
-            await Future<void>.delayed(Duration.zero);
-          }
-          expect(f.playback.controlsBusy, false);
-          expect(mediaLoads(f), hasLength(5), reason: 'initial load, proactive resume, then three recovery attempts');
-          expect(
-            mediaLoads(f).every((call) => (call.arguments as Map)['args'][1] == 'https://ted.example$mediaPath'),
-            true,
-          );
-          expect(latestStart(f), '17.0');
-          expect(f.playback.failure?.code, 'playback_failed');
-          expect(f.playback.completedNaturally, false);
           await f.playback.stop();
+          expect(transport.releaseClose!.isCompleted, false);
+          expect(f.reports.last['kind'], 'stop');
           expect(f.reports.last['position_ms'], 17000);
-          expect(f.reports.every((report) => report['natural_eof'] == false), true);
+          var closed = false;
+          final closing = f.close().whenComplete(() => closed = true);
+          await settlePlayback();
+          expect(f.calls.where((call) => call.method == 'dispose'), hasLength(1));
+          expect(closed, false);
+          transport.releaseClose!.complete();
+          await closing;
+          expect(transport.closes, 1);
         } finally {
+          if (!transport.releaseClose!.isCompleted) transport.releaseClose!.complete();
           await f.close();
         }
       },

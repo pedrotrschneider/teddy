@@ -20,6 +20,7 @@ import '../widgets/overlay_sheet.dart';
 import 'ted_client.dart';
 import 'ted_models.dart';
 import 'ted_playback.dart';
+import 'ted_media_transport.dart';
 import 'ted_presentation.dart';
 import 'ted_local_store.dart';
 import 'ted_app_shutdown.dart';
@@ -99,6 +100,7 @@ class _TeddyPlayerState extends State<TeddyPlayer> {
     journal: widget.journal,
     offline: widget.offline,
     localSubtitles: widget.localSubtitles,
+    mediaTransport: widget.offline ? null : TedPlaybackRelay(widget.client.auth, widget.session),
   );
   TedEpisodeTargets _targets = const TedEpisodeTargets();
   bool _seasonRemembered = false;

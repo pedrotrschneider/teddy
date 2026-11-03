@@ -18,6 +18,7 @@ import 'package:plezy/ted/ted_auth.dart';
 import 'package:plezy/ted/ted_client.dart';
 import 'package:plezy/ted/ted_models.dart';
 import 'package:plezy/ted/ted_playback.dart';
+import 'package:plezy/ted/ted_media_transport.dart';
 import 'package:plezy/ted/ted_playback_chapters.dart';
 import 'package:plezy/utils/log_redaction_manager.dart';
 import '../test_helpers/mock_player_channels.dart';
@@ -32,7 +33,8 @@ class ControlFixture {
   final int pinnedDuration;
   final int resumeMs;
   final int expectedDuration;
-  ControlFixture({this.pinnedDuration = 100000, this.resumeMs = 10000, this.expectedDuration = 0});
+  final TedMediaTransport? mediaTransport;
+  ControlFixture({this.pinnedDuration = 100000, this.resumeMs = 10000, this.expectedDuration = 0, this.mediaTransport});
   DateTime now = DateTime.utc(2026, 10, 10);
   int rotations = 0;
   final refreshEntered = Completer<void>();
@@ -88,6 +90,7 @@ class ControlFixture {
       resumeMs,
       expectedDurationMs: expectedDuration,
     ),
+    mediaTransport: mediaTransport,
   );
   Future<Object?> method(MethodCall call) async {
     calls.add(call);
@@ -333,6 +336,8 @@ void main() {
                 expect(decoderWrite, lessThan(open), reason: 'Select the decoder before opening the source');
                 expect(properties['cache-pause-initial'], 'no');
                 expect(properties['cache-pause-wait'], '0.5');
+                expect(properties['cache'], 'yes');
+                expect(properties['demuxer-hysteresis-secs'], '0');
                 expect(properties.containsKey('demuxer-max-bytes'), false);
                 expect(properties.containsKey('cache-secs'), false);
                 await f.close();
@@ -1253,7 +1258,7 @@ void main() {
               await playback.flush();
               now = now.add(const Duration(minutes: 11));
               await playback.seek(const Duration(seconds: 40));
-              expect(rotations, 1, reason: 'a seek must install fresh stream credentials before requesting ranges');
+              expect(rotations, 0, reason: 'a native control must retain the decoder and its cache');
               expect(
                 calls
                     .where(
@@ -1262,20 +1267,20 @@ void main() {
                           call.method == 'command' && (call.arguments as Map)['args'][0] == 'loadfile',
                     )
                     .length,
-                2,
+                1,
               );
               expect(
                 calls.where(
                   (call) =>
                       call.method == 'seek' || call.method == 'command' && (call.arguments as Map)['args'][0] == 'seek',
                 ),
-                isEmpty,
+                hasLength(1),
               );
               await playback.reconnect();
               expect(rotations, 1);
               if (exo) {
                 final opens = calls.where((call) => call.method == 'open').toList();
-                expect(opens.length, 3);
+                expect(opens.length, 2);
                 final current = opens.last.arguments as Map;
                 expect(current['uri'], 'https://ted.example$mediaPath');
                 expect(current['headers'], {
@@ -1288,7 +1293,7 @@ void main() {
                 final loads = calls
                     .where((call) => call.method == 'command' && (call.arguments as Map)['args'][0] == 'loadfile')
                     .toList();
-                expect(loads.length, 3);
+                expect(loads.length, 2);
                 expect((loads.last.arguments as Map)['args'][1], 'https://ted.example$mediaPath');
                 final headers = calls
                     .where((call) => call.method == 'command' && (call.arguments as Map)['args'][0] == 'change-list')
