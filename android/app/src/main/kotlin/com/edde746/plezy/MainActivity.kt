@@ -952,7 +952,7 @@ class MainActivity : FlutterActivity() {
             // Android verifies package identity, version code and retained signing key.
             val info = packageManager.getPackageArchiveInfo(apk.path, 0)
             if (info?.packageName != packageName) throw IllegalArgumentException("Wrong update package")
-            val uri = androidx.core.content.FileProvider.getUriForFile(this, "com.edde746.plezy.fileprovider", apk)
+            val uri = shareFileUri(apk)
             startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
               .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
             result.success(true)

@@ -7,7 +7,6 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import android.os.Parcelable
-import androidx.core.content.FileProvider
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -185,7 +184,7 @@ internal class ExternalPlayerChannel(private val activity: Activity) {
 
     val path = if (filePath.startsWith("file://")) filePath.removePrefix("file://") else filePath
     val file = File(path)
-    val uri = FileProvider.getUriForFile(activity, "com.edde746.plezy.fileprovider", file)
+    val uri = activity.shareFileUri(file)
     return Source(uri, grantRead = true, fileName = file.name)
   }
 

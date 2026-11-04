@@ -4,6 +4,8 @@ import android.app.Activity
 import android.app.ActivityManager
 import android.content.ComponentCallbacks2
 import android.content.Context
+import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.SurfaceTexture
 import android.media.AudioManager
 import android.os.Handler
@@ -2184,6 +2186,27 @@ class MpvPlayerPluginTest {
     assertNull(entries(25)["async"])
     assertEquals("0", entries(25)["ndk_codec"])
     assertEquals("0", entries(36)["ndk_codec"])
+  }
+
+  @Test
+  fun tvVideoDecodesAudioAheadOnASeparateThread() {
+    val context = Robolectric.buildActivity(Activity::class.java).get()
+    shadowOf(context.packageManager).setSystemFeature(PackageManager.FEATURE_LEANBACK, true)
+
+    assertEquals(
+      mapOf("ad-queue-enable" to "yes", "ad-queue-max-secs" to "0.5"),
+      MpvPlayerCore.audioDecoderQueueOptions(context, audioOnly = false).toMap()
+    )
+    assertTrue(MpvPlayerCore.audioDecoderQueueOptions(context, audioOnly = true).isEmpty())
+  }
+
+  @Test
+  fun touchDeviceKeepsTheDefaultAudioDecodePath() {
+    val activity = Robolectric.buildActivity(Activity::class.java).get()
+    val context = activity.createConfigurationContext(Configuration().apply { uiMode = Configuration.UI_MODE_TYPE_NORMAL })
+    shadowOf(context.packageManager).setSystemFeature(PackageManager.FEATURE_TOUCHSCREEN, true)
+
+    assertTrue(MpvPlayerCore.audioDecoderQueueOptions(context, audioOnly = false).isEmpty())
   }
 
   private fun awaitQueueEntry(

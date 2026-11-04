@@ -20,6 +20,7 @@ import 'package:plezy/ted/ted_models.dart';
 import 'package:plezy/ted/ted_playback.dart';
 import 'package:plezy/ted/ted_media_transport.dart';
 import 'package:plezy/ted/ted_playback_chapters.dart';
+import 'package:plezy/utils/app_logger.dart';
 import 'package:plezy/utils/log_redaction_manager.dart';
 import '../test_helpers/mock_player_channels.dart';
 import '../test_helpers/prefs.dart';
@@ -164,6 +165,44 @@ void main() {
   setUp(() async {
     resetSharedPreferencesForTest();
     SettingsService.resetForTesting();
+  });
+
+  test('MPV audio underruns are logged once in a burst without restarting or exposing native text', () async {
+    final f = ControlFixture();
+    addTearDown(f.auth.close);
+    MemoryLogOutput.clearLogs();
+    await withMockPlayerChannels(
+      methodChannelName: 'com.plezy/mpv_player',
+      eventChannelName: 'com.plezy/mpv_player/events',
+      methodHandler: f.method,
+      testBody: () async {
+        try {
+          await f.open();
+          f.calls.clear();
+          void log(String prefix, String text) =>
+              f.player.handlePlayerEvent('log-message', {'prefix': prefix, 'level': 'warn', 'text': text});
+
+          log('cplayer', 'Audio device underrun detected. https://private.example/stream');
+          log('ffmpeg', 'Audio device underrun detected.');
+          await Future<void>.delayed(Duration.zero);
+          expect(MemoryLogOutput.getLogs().where((entry) => entry.message.contains('phase=audio_underrun')), isEmpty);
+
+          log('cplayer', 'Audio device underrun detected.');
+          log('cplayer', 'Audio device underrun detected.\n');
+          await Future<void>.delayed(Duration.zero);
+          final diagnostic = MemoryLogOutput.getLogs()
+              .map((entry) => entry.message)
+              .where((message) => message.contains('phase=audio_underrun'))
+              .single;
+          expect(diagnostic, contains('position_ms=17000'));
+          expect(diagnostic, isNot(contains('private.example')));
+          expect(f.playback.failure, isNull);
+          expect(f.calls.where((call) => call.method == 'command'), isEmpty);
+        } finally {
+          await f.playback.closePlayer();
+        }
+      },
+    );
   });
 
   for (final offline in [false, true]) {

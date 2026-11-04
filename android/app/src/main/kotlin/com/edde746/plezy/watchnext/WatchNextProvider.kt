@@ -97,7 +97,8 @@ class WatchNextProvider internal constructor(
     private const val PREFS = "system_shelf_state"
     private const val GRANTED_URIS = "granted_uris"
     private const val GRANTED_PACKAGES = "granted_packages"
-    internal const val SHELF_SCHEMA_VERSION = 1
+    // Version 2 replaces old Plezy poster URIs after an in-place app update.
+    internal const val SHELF_SCHEMA_VERSION = 2
     private const val SHELF_SCHEMA_VERSION_KEY = "shelf_schema_version"
     private val ROW_COLUMNS = arrayOf(
       TvContractCompat.WatchNextPrograms._ID,
@@ -144,7 +145,7 @@ class WatchNextProvider internal constructor(
   )
 
   private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-  private val artwork = SystemShelfArtworkStore(context.cacheDir)
+  private val artwork = SystemShelfArtworkStore(context)
   private data class CommittedPublication(
     val ownerId: String,
     val generation: Long,

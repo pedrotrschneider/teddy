@@ -82,6 +82,8 @@ TV controls are larger, centered with right controls vertically aligned. One see
 
 Android defaults to MPV with direct MediaCodec hardware decoding into the native video surface. Keep Hardware Decoding enabled for supported 4K media. Video Playback → Android video player also offers the bundled ExoPlayer; decoder/backend changes take effect on the next video. The Hardware Decoding toggle controls MPV; ExoPlayer selects decoders automatically. After installing a build containing the October 16 Chromecast fixes, compare the same 4K source with hardware decoding enabled, then try ExoPlayer if MPV still stutters. Check motion, seeking, subtitles and HDR on the actual device; host Flutter tests cannot establish decoder throughput or display cadence.
 
+For MPV video on Android TV, Teddy decodes up to half a second of audio ahead on a separate thread. Logs include the playback position when MPV reports an audio underrun. A listening test on the device can check whether this reduces crackling.
+
 Chromecast with Google TV 4K supports hardware H.264/HEVC/VP9; AV1 sources require software decoding on that model. MPV already routes AV1 without hardware support through its native software decoder. ExoPlayer may use an Android software MediaCodec component instead. A 1080p label alone does not establish hardware compatibility: for example, the Trix Fruits Basket complete-series pack contains 10-bit AV1 episodes. Select an H.264 or HEVC release for the hardware path on this device; sources are never silently replaced. See [Google's device codec list](https://developers.google.com/cast/docs/media). Device decoder logs remain necessary to measure a specific session's drops and selected decoder.
 
 Buffering pulses the media logo. Resume/unbuffered seeking must not trigger natural completion or retain imaginary buffered ranges. Next marks the current episode watched explicitly, navigates target details first and uses matching RD strategy or unique add-on/binge group; otherwise the target waits for selection. Download adjacency requires available local targets. Autoplay defaults off.
@@ -128,6 +130,8 @@ The current automated suites cover these boundaries; this checklist is for owner
 [UPSTREAM_README.md](UPSTREAM_README.md) records Plezy revision/license. Retain LICENSE, UPSTREAM.json, third_party notices and native dependency notices. Unused app integrations being removed does not authorize dropping shared player/widget copyrights. Contribution guidance is in [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Automated releases
+
+Teddy's Android file sharing and launcher artwork providers use its application ID, `com.entertainmentdistrict.teddy`, so Plezy and Teddy can install side by side. Upgrading from an older Teddy build removes its cached launcher shelf entries that refer to the old artwork authority.
 
 Main pushes publish GitHub releases; develop pushes publish prereleases. PRs produce workflow artifacts only. Version allocation starts from `version.txt` (0.3); TED and Teddy must share their MAJOR.MINOR during the 0.x alpha (major only from 1.0). See [release setup and compatibility](../ted/docs/releases.md) for the platform matrix, required Android signing secrets, limitations, and rerun behavior. Inherited upstream store-release scripts are not the Teddy release path.
 

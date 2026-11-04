@@ -46,6 +46,7 @@ class TedPlayback extends ChangeNotifier {
   int _idleProgressTicks = 0;
   bool _closed = false;
   final Stopwatch _startup = Stopwatch();
+  final Stopwatch _sinceAudioUnderrun = Stopwatch();
   bool _startupReported = false;
   bool _ready = false;
   bool _stopping = false;
@@ -221,9 +222,19 @@ class TedPlayback extends ChangeNotifier {
     );
     _subscriptions.add(
       player.streams.log.listen((log) {
-        // Raw player diagnostics may contain URLs or headers. Keep them out of
-        // Teddy logs/UI and use only this numeric status to recover access.
-        if (PlayerError.httpStatusFromLog(log.text) == 401 && !_stopping && !_closed && _recovery == null) {
+        if (_stopping || _closed) return;
+        // Log only the recognized MPV event with playback context. Native
+        // messages can contain private URLs or headers.
+        if (log.level == PlayerLogLevel.warn &&
+            log.prefix == 'cplayer' &&
+            log.text.trim() == 'Audio device underrun detected.' &&
+            (!_sinceAudioUnderrun.isRunning || _sinceAudioUnderrun.elapsed >= const Duration(seconds: 30))) {
+          _sinceAudioUnderrun
+            ..reset()
+            ..start();
+          _diagnostic('audio_underrun', code: 'audio_device_underrun');
+        }
+        if (PlayerError.httpStatusFromLog(log.text) == 401 && _recovery == null) {
           _recoverInterrupted(refreshAccess: true, reason: 'http_401');
         }
       }),

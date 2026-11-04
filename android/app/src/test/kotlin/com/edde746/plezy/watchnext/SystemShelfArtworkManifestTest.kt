@@ -15,7 +15,6 @@ import org.w3c.dom.Element
 class SystemShelfArtworkManifestTest {
   private companion object {
     const val ANDROID_NAMESPACE = "http://schemas.android.com/apk/res/android"
-    const val AUTHORITY = "com.edde746.plezy.systemshelf.artwork"
     val MANIFEST_CANDIDATES = listOf(
       "src/main/AndroidManifest.xml",
       "app/src/main/AndroidManifest.xml",
@@ -25,13 +24,23 @@ class SystemShelfArtworkManifestTest {
 
   @Test
   fun artworkProviderIsReachableOnlyThroughUriGrants() {
-    val provider = artworkProvider()
+    val provider = providerNamed(".watchnext.SystemShelfArtworkProvider")
 
+    assertEquals("\${applicationId}.systemshelf.artwork", provider.getAttributeNS(ANDROID_NAMESPACE, "authorities"))
     assertEquals("false", provider.getAttributeNS(ANDROID_NAMESPACE, "exported"))
     assertEquals("true", provider.getAttributeNS(ANDROID_NAMESPACE, "grantUriPermissions"))
   }
 
-  private fun artworkProvider(): Element {
+  @Test
+  fun apkAndDownloadSharingUseAnAppScopedProviderWithExplicitGrants() {
+    val provider = providerNamed("androidx.core.content.FileProvider")
+
+    assertEquals("\${applicationId}.fileprovider", provider.getAttributeNS(ANDROID_NAMESPACE, "authorities"))
+    assertEquals("false", provider.getAttributeNS(ANDROID_NAMESPACE, "exported"))
+    assertEquals("true", provider.getAttributeNS(ANDROID_NAMESPACE, "grantUriPermissions"))
+  }
+
+  private fun providerNamed(name: String): Element {
     val manifest = DocumentBuilderFactory.newInstance()
       .apply { isNamespaceAware = true }
       .newDocumentBuilder()
@@ -39,9 +48,9 @@ class SystemShelfArtworkManifestTest {
     val providers = manifest.getElementsByTagName("provider")
     for (index in 0 until providers.length) {
       val provider = providers.item(index) as Element
-      if (provider.getAttributeNS(ANDROID_NAMESPACE, "authorities") == AUTHORITY) return provider
+      if (provider.getAttributeNS(ANDROID_NAMESPACE, "name") == name) return provider
     }
-    throw AssertionError("No <provider> declares android:authorities=\"$AUTHORITY\"")
+    throw AssertionError("No <provider> declares android:name=\"$name\"")
   }
 
   private fun manifestFile(): File {

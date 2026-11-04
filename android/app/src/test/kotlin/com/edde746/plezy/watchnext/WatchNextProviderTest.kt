@@ -89,20 +89,23 @@ class WatchNextProviderTest {
       assertEquals(1, tvProvider.inserted.size)
       val stored = tvProvider.inserted.single()
       val poster = stored.getAsString(TvContractCompat.PreviewPrograms.COLUMN_POSTER_ART_URI)
-      assertTrue(poster.startsWith("content://${SystemShelfArtworkProvider.AUTHORITY}/art/"))
+      assertTrue(poster.startsWith("content://${context.packageName}.systemshelf.artwork/art/"))
       assertFalse(poster.contains("http"))
 
       val artworkProvider = Robolectric.buildContentProvider(SystemShelfArtworkProvider::class.java).create().get()
       val localBytes = AutoCloseInputStream(artworkProvider.openFile(Uri.parse(poster), "r")).use { it.readBytes() }
       assertArrayEquals(imageBytes, localBytes)
+      val oldUri = Uri.parse(poster).buildUpon().authority("com.edde746.plezy.systemshelf.artwork").build()
+      assertNull(SystemShelfArtworkStore(context).resolve(oldUri))
+      assertNull(artworkProvider.getType(oldUri))
     }
   }
 
   @Test
   fun traversalUnknownOversizeAndMalformedArtworkAreRejectedWithoutDroppingMetadata() {
-    val store = SystemShelfArtworkStore(context.cacheDir)
-    assertNull(store.resolve(Uri.parse("content://${SystemShelfArtworkProvider.AUTHORITY}/art/../../private")))
-    assertNull(store.resolve(Uri.parse("content://${SystemShelfArtworkProvider.AUTHORITY}/art/${"a".repeat(64)}/${"b".repeat(32)}.art")))
+    val store = SystemShelfArtworkStore(context)
+    assertNull(store.resolve(Uri.parse("content://${context.packageName}.systemshelf.artwork/art/../../private")))
+    assertNull(store.resolve(Uri.parse("content://${context.packageName}.systemshelf.artwork/art/${"a".repeat(64)}/${"b".repeat(32)}.art")))
 
     withServer("image/png", ByteArray(SystemShelfArtworkStore.MAX_IMAGE_BYTES + 1)) { source ->
       val provider = WatchNextProvider(context)
@@ -452,7 +455,7 @@ class WatchNextProviderTest {
       val ownership = SystemShelfLifecycle.claim(SystemShelfLifecycle.acquire(), "owner", 1)!!
       val session = SystemShelfSyncSession(ownership, 2_000, budget = budget)
 
-      assertNull(SystemShelfArtworkStore(context.cacheDir).prepare("owner", source, session))
+      assertNull(SystemShelfArtworkStore(context).prepare("owner", source, session))
       assertEquals(malformed.size.toLong(), budget.consumed)
       assertEquals(100 - malformed.size, budget.remaining)
     }
@@ -464,7 +467,7 @@ class WatchNextProviderTest {
       val ownership = SystemShelfLifecycle.claim(SystemShelfLifecycle.acquire(), "owner", 1)!!
       val session = SystemShelfSyncSession(ownership, 2_000, budget = budget)
 
-      assertNull(SystemShelfArtworkStore(context.cacheDir).prepare("owner", source, session))
+      assertNull(SystemShelfArtworkStore(context).prepare("owner", source, session))
       assertEquals(imageBytes.size.toLong(), budget.consumed)
       assertEquals(100 - imageBytes.size, budget.remaining)
     }
@@ -617,12 +620,12 @@ class WatchNextProviderTest {
     directory.resolve(legacyKey).writeBytes(imageBytes)
     directory.resolve(contentKey).writeBytes(imageBytes)
     directory.resolve(corruptKey).writeText("corrupt")
-    val store = SystemShelfArtworkStore(context.cacheDir)
+    val store = SystemShelfArtworkStore(context)
     val legacy = store.contentUri(owner, legacyKey)
     val contentAddressed = store.contentUri(owner, contentKey)
     val corrupt = store.contentUri(owner, corruptKey)
     val malformed = Uri.parse(
-      "content://${SystemShelfArtworkProvider.AUTHORITY}/art/$owner/${"e".repeat(48)}.art"
+      "content://${context.packageName}.systemshelf.artwork/art/$owner/${"e".repeat(48)}.art"
     )
     context.getSharedPreferences("system_shelf_state", 0).edit()
       .putStringSet(
@@ -668,7 +671,7 @@ class WatchNextProviderTest {
   @Test
   @Config(sdk = [25])
   fun api25RevocationUsesUriWideFallback() {
-    val stale = Uri.parse("content://${SystemShelfArtworkProvider.AUTHORITY}/art/stale/file.art")
+    val stale = Uri.parse("content://${context.packageName}.systemshelf.artwork/art/stale/file.art")
     context.getSharedPreferences("system_shelf_state", 0).edit()
       .putStringSet("granted_uris", setOf(stale.toString()))
       .putStringSet("granted_packages", setOf("selected.home.launcher"))
@@ -715,17 +718,25 @@ class WatchNextProviderTest {
     assertEquals(0, tvProvider.deleteCount)
     assertTrue(legacyFile.isFile)
     assertTrue(contentAddressedFile.isFile)
-    assertEquals(1, WatchNextProvider.SHELF_SCHEMA_VERSION)
   }
 
   @Test
   fun packageUpdateCleanupDeletesLegacyRowsAndOwnedFiles() {
-    context.cacheDir.resolve("system_shelf_artwork/legacy").apply { mkdirs() }.resolve("legacy.art").writeBytes(imageBytes)
+    val owner = "a".repeat(64)
+    val key = "${"b".repeat(64)}.art"
+    context.cacheDir.resolve("system_shelf_artwork/$owner").apply { mkdirs() }.resolve(key).writeBytes(imageBytes)
+    val prefs = context.getSharedPreferences("system_shelf_state", 0)
+    prefs.edit()
+      .putInt("shelf_schema_version", 1)
+      .putStringSet("granted_uris", setOf("content://com.edde746.plezy.systemshelf.artwork/art/$owner/$key"))
+      .commit()
     val receiver = SystemShelfUpdateReceiver(Executor { command -> command.run() })
     receiver.onReceive(context, Intent(Intent.ACTION_MY_PACKAGE_REPLACED))
 
     assertEquals(1, tvProvider.deleteCount)
     assertFalse(context.cacheDir.resolve("system_shelf_artwork").exists())
+    assertTrue(prefs.getStringSet("granted_uris", null).isNullOrEmpty())
+    assertEquals(WatchNextProvider.SHELF_SCHEMA_VERSION, prefs.getInt("shelf_schema_version", 0))
   }
 
   @Test
@@ -765,7 +776,7 @@ class WatchNextProviderTest {
       val sourceB = "${server.baseUrl}/b"
       assertTrue(provider.syncWatchNextPrograms("owner-a", 1, listOf(item(sourceA))))
       val committedPoster = committedPoster()!!
-      val committedArtwork = SystemShelfArtworkStore(context.cacheDir)
+      val committedArtwork = SystemShelfArtworkStore(context)
         .resolveOwned("owner-a", committedPoster)!!
         .canonicalFile
       tvProvider.failBatch = true
@@ -992,7 +1003,7 @@ class WatchNextProviderTest {
       selectDefaultHome(selectedHome, selectedHome)
       val grantContext = RecordingGrantContext(context)
       val provider = WatchNextProvider(grantContext)
-      val store = SystemShelfArtworkStore(context.cacheDir)
+      val store = SystemShelfArtworkStore(context)
       val stableSource = "${server.baseUrl}/stable"
       assertTrue(provider.syncWatchNextPrograms("owner-a", 1, listOf(item(stableSource))))
       val firstPoster = committedPoster()!!
@@ -1005,7 +1016,7 @@ class WatchNextProviderTest {
       val expectedKey = MessageDigest.getInstance("SHA-256")
         .digest("owner-a\u0000$stableSource".toByteArray()).joinToString("") { "%02x".format(it) } + ".art"
       assertEquals(
-        Uri.parse("content://${SystemShelfArtworkProvider.AUTHORITY}/art/$expectedOwner/$expectedKey"),
+        Uri.parse("content://${context.packageName}.systemshelf.artwork/art/$expectedOwner/$expectedKey"),
         firstPoster
       )
 
@@ -1120,7 +1131,7 @@ class WatchNextProviderTest {
       val sourceB = "${server.baseUrl}/b"
       assertTrue(provider.syncWatchNextPrograms("owner-a", 1, listOf(item(sourceA))))
       val originalPoster = committedPoster()!!
-      val originalFile = SystemShelfArtworkStore(context.cacheDir)
+      val originalFile = SystemShelfArtworkStore(context)
         .resolveOwned("owner-a", originalPoster)!!
         .canonicalFile
 
@@ -1246,7 +1257,7 @@ class WatchNextProviderTest {
       )
     ).use { server ->
       val provider = WatchNextProvider(context)
-      val store = SystemShelfArtworkStore(context.cacheDir)
+      val store = SystemShelfArtworkStore(context)
       val source = "${server.baseUrl}/stable"
       assertTrue(provider.syncWatchNextPrograms("owner-a", 1, listOf(item(source))))
       val stablePoster = committedPoster()!!
@@ -1339,7 +1350,7 @@ class WatchNextProviderTest {
       )
     ).use { server ->
       val provider = WatchNextProvider(context)
-      val store = SystemShelfArtworkStore(context.cacheDir)
+      val store = SystemShelfArtworkStore(context)
       val sourceA = "${server.baseUrl}/a"
       val sourceB = "${server.baseUrl}/b"
       assertTrue(provider.syncWatchNextPrograms("owner-a", 1, listOf(item(sourceA))))

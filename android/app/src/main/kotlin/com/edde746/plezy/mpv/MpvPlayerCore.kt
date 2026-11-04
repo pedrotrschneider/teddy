@@ -17,6 +17,7 @@ import android.view.SurfaceView
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
+import com.edde746.plezy.TvDetection
 import com.edde746.plezy.exoplayer.DoviBridge
 import com.edde746.plezy.libmpv.*
 import com.edde746.plezy.shared.AudioFocusManager
@@ -260,6 +261,13 @@ class MpvPlayerCore private constructor(
       "vd-queue-max-secs" to "0.5",
       "vd-queue-max-bytes" to "48MiB"
     )
+
+    internal fun audioDecoderQueueOptions(context: Context, audioOnly: Boolean): List<Pair<String, String>> {
+      if (audioOnly || !TvDetection.isTv(context)) return emptyList()
+      // Decode ahead off the playloop so a busy video core can refill AudioTrack
+      // from decoded frames. MPV also caps this queue at 1 MiB and 48,000 samples.
+      return listOf("ad-queue-enable" to "yes", "ad-queue-max-secs" to "0.5")
+    }
 
     /**
      * Whether content with this transfer is worth an HDR (BT.2020 PQ) GL
@@ -1015,6 +1023,7 @@ class MpvPlayerCore private constructor(
                 if (demuxerBudget != null) {
                   demuxerBudgetWrites(demuxerBudget) { name, value -> setOption(name, value) }
                 }
+                for ((name, value) in audioDecoderQueueOptions(context, audioOnly)) setOption(name, value)
                 setOption("ao", "audiotrack,opensles")
                 // Pause on the last frame at EOF instead of unloading the file, so a
                 // seek after the video ends still works (matches Linux/Windows).
