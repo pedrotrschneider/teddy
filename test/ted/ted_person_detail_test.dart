@@ -429,7 +429,7 @@ void main() {
     final client = PersonFixture();
     await mount(tester, client, tv: true, shell: true, size: const Size(1512, 950));
     await tester.pumpAndSettle();
-    await tester.tap(find.byWidgetPredicate((w) => w is NavigationRailItem && (w.label as Text).data == 'Movies'));
+    await tester.tap(find.byWidgetPredicate((w) => w is NavigationRailItem && (w.label as Text).data == 'Discover'));
     await tester.pumpAndSettle();
     await tester.tap(find.byType(MediaCard).first);
     await tester.pumpAndSettle();
@@ -445,7 +445,7 @@ void main() {
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
     await tester.pumpAndSettle();
     expect(find.byType(TedPersonDetail), findsOneWidget);
-    expect(find.byType(NavigationRailItem), findsNWidgets(10));
+    expect(find.byType(NavigationRailItem), findsNWidgets(6));
     expect(FocusManager.instance.primaryFocus?.debugLabel, contains('-watched'));
     await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
     await tester.sendKeyDownEvent(LogicalKeyboardKey.arrowLeft);

@@ -105,6 +105,21 @@ void main() {
     expect(find.text('Open settings'), findsOneWidget);
   });
 
+  test('removed startup destinations resolve to Discover in saved and portable settings', () async {
+    final settings = SettingsService.instance;
+    const startup = SettingsService.teddyStartupSection;
+    for (final old in ['movies', 'series', 'watchlist']) {
+      await settings.prefs.setString(startup.key, old);
+      settings.refreshListenables();
+      expect(settings.read(startup), TeddySection.discover);
+      final exported = SettingsExportService.buildExportMap(settings.prefs, currentUserUuid: 'teddy');
+      await settings.write(startup, TeddySection.home);
+      await SettingsExportService.applyImportMap(exported, settings.prefs, currentUserUuid: 'teddy');
+      settings.refreshListenables();
+      expect(settings.read(startup), TeddySection.discover);
+    }
+  });
+
   test(
     'reset includes patterns and fullscreen; portable round-trip retains native options and excludes secrets',
     () async {

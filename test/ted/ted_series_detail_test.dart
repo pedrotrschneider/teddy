@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../test_helpers/ted_navigation.dart';
 import 'dart:ui' show PointerDeviceKind;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -355,9 +356,10 @@ void main() {
       client,
     );
     await tester.tap(
-      find.byWidgetPredicate((w) => w is NavigationRailItem && w.label is Text && (w.label as Text).data == 'Series'),
+      find.byWidgetPredicate((w) => w is NavigationRailItem && w.label is Text && (w.label as Text).data == 'Discover'),
     );
     await tester.pumpAndSettle();
+    await chooseTedDiscoverType(tester, 'Series');
     final showCard = find
         .byWidgetPredicate((w) => w is MediaCard && (w.item as MediaItem).id == 'series/tt4000000')
         .first;
@@ -365,7 +367,7 @@ void main() {
     await tester.tap(showCard);
     await tester.pumpAndSettle();
     expect(find.byType(TedSeriesDetail), findsOneWidget);
-    expect(find.byType(NavigationRailItem), findsNWidgets(10));
+    expect(find.byType(NavigationRailItem), findsNWidgets(6));
     expect(find.text('Next Up'), findsNothing);
     expect(find.text('Start from the beginning'), findsNothing);
     await tester.tap(find.text('Download series'));
@@ -390,7 +392,7 @@ void main() {
     await tester.tap(epCard);
     await tester.pumpAndSettle();
     expect(find.byType(TedEpisodeDetail), findsOneWidget);
-    expect(find.byType(NavigationRailItem), findsNWidgets(10));
+    expect(find.byType(NavigationRailItem), findsNWidgets(6));
     expect(find.text('Only this episode description'), findsOneWidget);
     expect(find.text('Guest performer'), findsNothing);
     expect(find.text('Show performer'), findsOneWidget);
@@ -406,7 +408,7 @@ void main() {
     expect(find.byType(TedSeriesDetail), findsNothing);
     expect(focused(showCard), true);
     final showsNav = find.byWidgetPredicate(
-      (w) => w is NavigationRailItem && w.label is Text && (w.label as Text).data == 'Series',
+      (w) => w is NavigationRailItem && w.label is Text && (w.label as Text).data == 'Discover',
     );
     expect(tester.widget<NavigationRailItem>(showsNav).isSelected, true);
     expect(tester.takeException(), isNull);

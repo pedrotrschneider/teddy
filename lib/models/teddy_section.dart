@@ -4,9 +4,7 @@ import 'package:flutter/material.dart';
 enum TeddySection {
   search('search', 'Search'),
   home('home', 'Home'),
-  movies('movie', 'Movies'),
-  series('series', 'Series'),
-  watchlist('watchlist', 'Watch List'),
+  discover('discover', 'Discover'),
   ratings('ratings', 'Ratings'),
   downloads('downloads', 'Downloads');
 
@@ -15,9 +13,7 @@ enum TeddySection {
   IconData get icon => switch (this) {
     search => Icons.search,
     home => Icons.home_outlined,
-    movies => Icons.movie_outlined,
-    series => Icons.tv,
-    watchlist => Icons.bookmark_border,
+    discover => Icons.explore_outlined,
     ratings => Icons.rate_review_outlined,
     downloads => Icons.download_outlined,
   };

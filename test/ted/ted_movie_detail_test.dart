@@ -153,7 +153,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     await tester.tap(
-      find.byWidgetPredicate((w) => w is NavigationRailItem && w.label is Text && (w.label as Text).data == 'Movies'),
+      find.byWidgetPredicate((w) => w is NavigationRailItem && w.label is Text && (w.label as Text).data == 'Discover'),
     );
     await tester.pumpAndSettle();
     await tester.tap(find.byType(MediaCard).first);
@@ -417,7 +417,7 @@ void main() {
           ..heldSources = Completer<TedSourcePage>();
         await mount(tester, client, tv: tv, size: const Size(1512, 950));
         expect(find.byType(TedMovieDetail), findsOneWidget);
-        expect(find.byType(NavigationRailItem), findsNWidgets(10));
+        expect(find.byType(NavigationRailItem), findsNWidgets(6));
         expect(find.descendant(of: find.byType(TedBrowseHeader), matching: find.byType(Text)), findsNothing);
         expect(tester.widget<TedHomeBanner>(find.byType(TedHomeBanner)).catalogPreview, true);
         expect(client.mappedReads, 1);

@@ -78,6 +78,7 @@ Future<T?> showAppMenu<T>(
   Rect? anchorRect,
   AppMenuAnchorAlignment anchorAlignment = AppMenuAnchorAlignment.start,
   bool focusFirstItem = false,
+  bool openAbove = false,
 }) {
   assert(position != null || anchorRect != null, 'showAppMenu requires a position or anchorRect');
 
@@ -93,6 +94,7 @@ Future<T?> showAppMenu<T>(
       anchorRect: anchorRect,
       anchorAlignment: anchorAlignment,
       focusFirstItem: focusFirstItem,
+      openAbove: openAbove,
     ),
     transitionBuilder: (dialogContext, animation, _, child) {
       final curved = CurvedAnimation(parent: animation, curve: Curves.easeOutCubic, reverseCurve: Curves.easeInCubic);
@@ -694,6 +696,7 @@ class _AppMenuPopup<T> extends StatefulWidget {
   final Rect? anchorRect;
   final AppMenuAnchorAlignment anchorAlignment;
   final bool focusFirstItem;
+  final bool openAbove;
 
   const _AppMenuPopup({
     required this.entries,
@@ -701,6 +704,7 @@ class _AppMenuPopup<T> extends StatefulWidget {
     required this.anchorRect,
     required this.anchorAlignment,
     required this.focusFirstItem,
+    required this.openAbove,
   });
 
   @override
@@ -714,12 +718,24 @@ class _AppMenuPopupState<T> extends State<_AppMenuPopup<T>> {
   Widget build(BuildContext context) {
     final screenSize = MediaQuery.sizeOf(context);
     const edgePadding = 8.0;
+    const gap = 4.0;
+    final anchor = widget.anchorRect;
+    final above = widget.openAbove && anchor != null;
+    final safe = above ? MediaQuery.paddingOf(context) : EdgeInsets.zero;
+    final safeSize = Size(screenSize.width - safe.horizontal, screenSize.height - safe.vertical);
     final desiredWidth = math.max(_minMenuWidth, _estimateMenuWidth(context));
-    final menuWidth = desiredWidth.clamp(_minMenuWidth, math.max(_minMenuWidth, screenSize.width - edgePadding * 2));
-    final estimatedHeight = _estimateMenuHeight(widget.entries);
-    final availableHeight = math.max(0.0, screenSize.height - edgePadding * 2);
-    final menuHeight = estimatedHeight.clamp(0.0, availableHeight).toDouble();
-    final (:left, :top) = _resolvePosition(screenSize, menuWidth.toDouble(), menuHeight, edgePadding);
+    final menuWidth = math.min(desiredWidth, math.max(0.0, safeSize.width - edgePadding * 2));
+    final bottom = above ? screenSize.height - anchor.top + gap : null;
+    final menuHeight = above
+        ? math.max(0.0, anchor.top - gap - safe.top - edgePadding)
+        : math.min(_estimateMenuHeight(widget.entries), math.max(0.0, screenSize.height - edgePadding * 2));
+    final (:left, :top) = _resolvePosition(
+      safeSize,
+      menuWidth,
+      menuHeight,
+      edgePadding,
+      anchor?.translate(-safe.left, -safe.top),
+    );
 
     return FocusScope(
       autofocus: false,
@@ -740,8 +756,9 @@ class _AppMenuPopupState<T> extends State<_AppMenuPopup<T>> {
           child: Stack(
             children: [
               Positioned(
-                left: left,
-                top: top,
+                left: left + safe.left,
+                top: above ? null : top,
+                bottom: bottom,
                 child: _AppMenuSurface<T>(
                   width: menuWidth.toDouble(),
                   maxHeight: menuHeight,
@@ -761,8 +778,8 @@ class _AppMenuPopupState<T> extends State<_AppMenuPopup<T>> {
     double menuWidth,
     double menuHeight,
     double edgePadding,
+    Rect? anchorRect,
   ) {
-    final anchorRect = widget.anchorRect;
     if (anchorRect != null) {
       final leftCandidate = switch (widget.anchorAlignment) {
         AppMenuAnchorAlignment.start => anchorRect.left,

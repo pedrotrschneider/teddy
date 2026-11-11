@@ -1,5 +1,7 @@
-import 'package:flutter/material.dart';
 import 'dart:typed_data';
+
+import 'package:flutter/material.dart';
+
 import 'ted_profile_avatar.dart';
 import '../widgets/app_menu.dart';
 import '../widgets/navigation_rail_item.dart';
@@ -27,7 +29,7 @@ class TedBrowseHeader extends StatelessWidget {
   );
 }
 
-/// Bottom sidebar actions share Plezy's destination sizing and focus chrome.
+/// The profile is the final control in both navigation layouts.
 class TedSidebarControls extends StatefulWidget {
   // The sidebar uses the desktop width in both desktop and TV layouts.
   static const collapsedContentWidth = NavigationRailLayout.collapsedWidth - 8;
@@ -35,7 +37,6 @@ class TedSidebarControls extends StatefulWidget {
   final Uint8List? profilePicture;
   final VoidCallback? onReload, onSettings, onSignOut, onSwitchProfile, onChangeServer;
   final bool compact, collapsed;
-  final bool settingsSelected;
   final ValueChanged<bool>? onAccountMenuChanged;
   const TedSidebarControls({
     super.key,
@@ -48,7 +49,6 @@ class TedSidebarControls extends StatefulWidget {
     this.onChangeServer,
     this.compact = false,
     this.collapsed = false,
-    this.settingsSelected = false,
     this.onAccountMenuChanged,
   });
   @override
@@ -56,83 +56,39 @@ class TedSidebarControls extends StatefulWidget {
 }
 
 class _TedSidebarControlsState extends State<TedSidebarControls> {
-  final _reload = FocusNode(debugLabel: 'ted_reload');
-  final _settings = FocusNode(debugLabel: 'ted_settings');
   final _account = FocusNode(debugLabel: 'ted_account');
+
   @override
   void dispose() {
-    _reload.dispose();
-    _settings.dispose();
     _account.dispose();
     super.dispose();
   }
 
-  Widget _action(String label, IconData icon, FocusNode node, VoidCallback? action) => Tooltip(
-    message: label,
-    child: Semantics(
-      enabled: action != null,
-      child: ExcludeFocus(
-        excluding: action == null,
-        child: Opacity(
-          opacity: action == null ? .5 : 1,
-          child: ClickableCursor(
-            enabled: action != null,
-            child: NavigationRailItem(
-              icon: icon,
-              label: Text(label),
-              isSelected: node == _settings && widget.settingsSelected,
-              mouseCursor: action != null ? SystemMouseCursors.click : SystemMouseCursors.basic,
-              isCollapsed: widget.compact || widget.collapsed,
-              collapsedLabel: label,
-              onTap: action ?? () {},
-              focusNode: node,
-              expandedContentWidth: 196,
-              collapsedContentWidth: widget.compact ? null : TedSidebarControls.collapsedContentWidth,
-            ),
-          ),
-        ),
-      ),
-    ),
-  );
-
   @override
-  Widget build(BuildContext context) {
-    final children = [
-      _action('Reload', Icons.refresh, _reload, widget.onReload),
-      _action('Settings', Icons.settings_outlined, _settings, widget.onSettings),
-      TedAccountMenu(
-        displayName: widget.displayName,
-        profilePicture: widget.profilePicture,
-        focusNode: _account,
-        onSignOut: widget.onSignOut,
-        onSwitchProfile: widget.onSwitchProfile,
-        onChangeServer: widget.onChangeServer,
-        collapsed: widget.collapsed,
-        onMenuChanged: widget.onAccountMenuChanged,
-        collapsedContentWidth: widget.compact ? null : TedSidebarControls.collapsedContentWidth,
-      ),
-    ];
-    return widget.compact
-        ? Row(
-            children: [
-              children[0],
-              children[1],
-              Expanded(child: children[2]),
-            ],
-          )
-        : Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: children);
-  }
+  Widget build(BuildContext context) => TedAccountMenu(
+    displayName: widget.displayName,
+    profilePicture: widget.profilePicture,
+    focusNode: _account,
+    onReload: widget.onReload,
+    onSettings: widget.onSettings,
+    onSignOut: widget.onSignOut,
+    onSwitchProfile: widget.onSwitchProfile,
+    onChangeServer: widget.onChangeServer,
+    compact: widget.compact,
+    collapsed: widget.compact || widget.collapsed,
+    onMenuChanged: widget.onAccountMenuChanged,
+    collapsedContentWidth: widget.compact ? null : TedSidebarControls.collapsedContentWidth,
+  );
 }
 
-enum _AccountAction { profiles, server, logout }
+enum _AccountAction { reload, settings, profiles, server, logout }
 
-/// Account identity and sign out; Settings is a separate sidebar action.
 class TedAccountMenu extends StatelessWidget {
   final String displayName;
   final Uint8List? profilePicture;
   final FocusNode focusNode;
-  final VoidCallback? onSignOut, onSwitchProfile, onChangeServer;
-  final bool collapsed;
+  final VoidCallback? onReload, onSettings, onSignOut, onSwitchProfile, onChangeServer;
+  final bool compact, collapsed;
   final double? collapsedContentWidth;
   final ValueChanged<bool>? onMenuChanged;
   const TedAccountMenu({
@@ -140,9 +96,12 @@ class TedAccountMenu extends StatelessWidget {
     required this.displayName,
     this.profilePicture,
     required this.focusNode,
+    this.onReload,
+    this.onSettings,
     required this.onSignOut,
     this.onSwitchProfile,
     this.onChangeServer,
+    this.compact = false,
     this.collapsed = false,
     this.collapsedContentWidth,
     this.onMenuChanged,
@@ -150,16 +109,29 @@ class TedAccountMenu extends StatelessWidget {
 
   Future<void> _open(BuildContext context) async {
     final box = context.findRenderObject() as RenderBox?;
-    if (box == null) return;
+    final overlay = Navigator.of(context, rootNavigator: true).overlay?.context.findRenderObject() as RenderBox?;
+    if (box == null || overlay == null) return;
+    // The popup is laid out in the navigator's logical coordinates at every UI scale.
+    final anchor = MatrixUtils.transformRect(box.getTransformTo(overlay), Offset.zero & box.size);
     onMenuChanged?.call(true);
     _AccountAction? selected;
     try {
       selected = await showAppMenu<_AccountAction>(
         context,
-        anchorRect: box.localToGlobal(Offset.zero) & box.size,
+        anchorRect: anchor,
+        anchorAlignment: compact ? AppMenuAnchorAlignment.end : AppMenuAnchorAlignment.start,
+        openAbove: true,
         focusFirstItem: true,
         entries: [
           AppMenuHeader(label: displayName),
+          AppMenuItem(value: _AccountAction.reload, label: 'Reload', icon: Icons.refresh, enabled: onReload != null),
+          AppMenuItem(
+            value: _AccountAction.settings,
+            label: 'Settings',
+            icon: Icons.settings_outlined,
+            enabled: onSettings != null,
+          ),
+          const AppMenuDivider(),
           AppMenuItem(
             value: _AccountAction.profiles,
             label: 'Switch Profile',
@@ -180,6 +152,8 @@ class TedAccountMenu extends StatelessWidget {
     }
     if (!context.mounted) return;
     focusNode.requestFocus();
+    if (selected == _AccountAction.reload) onReload?.call();
+    if (selected == _AccountAction.settings) onSettings?.call();
     if (selected == _AccountAction.profiles) onSwitchProfile?.call();
     if (selected == _AccountAction.server) onChangeServer?.call();
     if (selected == _AccountAction.logout) onSignOut?.call();

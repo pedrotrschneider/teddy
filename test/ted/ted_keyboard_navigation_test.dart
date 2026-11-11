@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../test_helpers/ted_navigation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -268,7 +269,7 @@ void main() {
       final client = SidebarFixture();
       await mount(tester, client, tv: tv);
       await press(tester, LogicalKeyboardKey.arrowUp);
-      const labels = ['Search', 'Home', 'Movies', 'Series', 'Watch List', 'Ratings', 'Downloads'];
+      const labels = ['Search', 'Home', 'Discover', 'Ratings', 'Downloads'];
       NavigationRailItem item(int i) => tester
           .widgetList<NavigationRailItem>(find.byType(NavigationRailItem))
           .firstWhere((v) => (v.label as Text).data == labels[i]);
@@ -317,19 +318,12 @@ void main() {
       await tester.pump();
       expect(client.reads.last, 'movie');
       expect(rail(tester, 1).isSelected, true);
-      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-      await tester.pump();
+      tester.widget<DropdownButtonFormField<String>>(find.byKey(const ValueKey('discover-type'))).onChanged!('series');
       await tester.pump();
       expect(client.reads.last, 'series');
-      expect(rail(tester, 2).isSelected, true);
-      for (var i = 0; i < 3; i++) {
-        await tester.sendKeyEvent(LogicalKeyboardKey.arrowUp);
-        await tester.pump();
-        await tester.pump();
-      }
-      expect(rail(tester, 3).focusNode.hasPrimaryFocus, true);
-      expect(rail(tester, 2).isSelected, true);
+      expect(rail(tester, 1).isSelected, true);
+      rail(tester, 3).focusNode.requestFocus();
+      await tester.pump();
       await tester.sendKeyEvent(LogicalKeyboardKey.enter);
       await tester.pump();
       client.heldMovie!.complete(const TedCatalogPage([], null));
@@ -395,13 +389,14 @@ void main() {
   });
 
   testWidgets('TV catalogue shelves and filters clamp held Left and leave on the next press', (tester) async {
-    for (final section in [1, 2]) {
+    for (final kind in ['movie', 'series']) {
       await mount(tester, SidebarFixture());
-      for (var i = 0; i < section; i++) {
-        await press(tester, LogicalKeyboardKey.arrowDown);
-      }
+      await press(tester, LogicalKeyboardKey.arrowDown);
       await press(tester, LogicalKeyboardKey.enter);
-      final titles = shelf(section == 1 ? 'popular-movie' : 'popular-series');
+      if (kind == 'series') {
+        await chooseTedDiscoverType(tester, 'Series');
+      }
+      final titles = shelf('popular-$kind');
       final hub = tester.state<HubSectionState>(titles);
       hub.requestFocusAt(3);
       await settle(tester);
@@ -414,24 +409,29 @@ void main() {
       expect(shelfIndex(tester, titles), 0);
       await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowLeft);
       await press(tester, LogicalKeyboardKey.arrowLeft);
-      expect(rail(tester, section).focusNode.hasPrimaryFocus, true);
+      expect(rail(tester, 1).focusNode.hasPrimaryFocus, true);
       await press(tester, LogicalKeyboardKey.arrowRight);
       expect(hub.hasFocus, true);
       await press(tester, LogicalKeyboardKey.arrowUp);
-      await press(tester, LogicalKeyboardKey.arrowRight);
-      await press(tester, LogicalKeyboardKey.arrowRight);
+      for (var i = 0; i < 4; i++) {
+        await press(tester, LogicalKeyboardKey.arrowRight);
+      }
       expect(focused(find.byKey(const ValueKey('catalog-genre'))), true);
       await tester.sendKeyDownEvent(LogicalKeyboardKey.arrowLeft);
-      for (var i = 0; i < 4; i++) {
+      for (var i = 0; i < 5; i++) {
         await tester.sendKeyRepeatEvent(LogicalKeyboardKey.arrowLeft);
         await settle(tester);
       }
-      expect(focused(find.text('Mapped')), true);
+      expect(focused(find.byKey(const ValueKey('discover-type'))), true);
       await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowLeft);
       await press(tester, LogicalKeyboardKey.arrowLeft);
-      expect(rail(tester, section).focusNode.hasPrimaryFocus, true);
+      expect(rail(tester, 1).focusNode.hasPrimaryFocus, true);
       await press(tester, LogicalKeyboardKey.arrowRight);
-      expect(focused(find.text('Mapped')), true, reason: 'Return to filters instead of the default shelf entry');
+      expect(
+        focused(find.byKey(const ValueKey('discover-type'))),
+        true,
+        reason: 'Return to filters instead of the default shelf entry',
+      );
       expect(tester.takeException(), isNull);
     }
   });
@@ -487,7 +487,9 @@ void main() {
         expect(focused(card(2)), true);
       }
       await press(tester, LogicalKeyboardKey.arrowUp);
-      await press(tester, LogicalKeyboardKey.arrowRight);
+      for (var i = 0; i < 3; i++) {
+        await press(tester, LogicalKeyboardKey.arrowRight);
+      }
       expect(focused(find.byKey(const ValueKey('catalog-watched'))), true);
       await press(tester, LogicalKeyboardKey.escape);
       expect(rail(tester, 1).focusNode.hasPrimaryFocus, true);
@@ -784,24 +786,26 @@ void main() {
     await mount(tester, KeyboardFixture(), onSettings: () => settings++, onSignOut: () => logouts++);
     await press(tester, LogicalKeyboardKey.arrowRight);
     await press(tester, LogicalKeyboardKey.arrowLeft);
-    for (var i = 0; i < 6; i++) {
+    for (var i = 0; i < 4; i++) {
       await press(tester, LogicalKeyboardKey.arrowDown);
     }
-    expect(focused(find.byTooltip('Reload')), true);
-    expect(rail(tester, 0).isSelected, true);
-    await press(tester, LogicalKeyboardKey.arrowDown);
-    expect(focused(find.byTooltip('Settings')), true);
-    await press(tester, LogicalKeyboardKey.enter);
-    expect(settings, 1);
-    await press(tester, LogicalKeyboardKey.arrowDown);
     final profile = find.byTooltip('Profile: Tester');
     expect(focused(profile), true);
+    expect(rail(tester, 0).isSelected, true);
     await press(tester, LogicalKeyboardKey.select);
-    expect(focused(find.text('Sign out')), true);
-    expect(find.text('Settings'), findsOneWidget);
+    expect(focused(find.text('Reload')), true);
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    expect(focused(find.text('Settings')), true);
+    await press(tester, LogicalKeyboardKey.enter);
+    expect(settings, 1);
+    expect(focused(profile), true);
+    await press(tester, LogicalKeyboardKey.enter);
     await press(tester, LogicalKeyboardKey.escape);
     expect(focused(profile), true);
     await press(tester, LogicalKeyboardKey.enter);
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    expect(focused(find.text('Sign out')), true);
     await press(tester, LogicalKeyboardKey.enter);
     expect(logouts, 1);
     expect(focused(profile), true);
@@ -815,10 +819,10 @@ void main() {
     expect(focused(find.byKey(const ValueKey('continue-watching'))), true);
     await press(tester, LogicalKeyboardKey.escape);
     expect(rail(tester, 0).focusNode.hasPrimaryFocus, true);
-    for (var i = 0; i < 6; i++) {
+    for (var i = 0; i < 4; i++) {
       await press(tester, LogicalKeyboardKey.arrowDown);
     }
-    expect(focused(find.byTooltip('Reload')), true, reason: 'Down from Downloads reaches bottom actions');
+    expect(focused(profile), true, reason: 'Down from Downloads reaches bottom actions');
     await press(tester, LogicalKeyboardKey.arrowUp);
     expect(
       find
@@ -845,18 +849,16 @@ void main() {
       onSettings: () => settings++,
       displayName: 'A very long account display name',
     );
-    for (var i = 0; i < 5; i++) {
+    for (var i = 0; i < 3; i++) {
       await press(tester, LogicalKeyboardKey.arrowDown);
     }
     final downloads = find.widgetWithText(NavigationRailItem, 'Downloads');
+    final profile = find.byTooltip('Profile: A very long account display name');
     expect(focused(downloads), true);
-    expect(tester.getBottomLeft(downloads).dy, lessThanOrEqualTo(tester.getTopLeft(find.byTooltip('Reload')).dy));
+    expect(tester.getBottomLeft(downloads).dy, lessThanOrEqualTo(tester.getTopLeft(profile).dy));
     await press(tester, LogicalKeyboardKey.arrowDown);
-    await press(tester, LogicalKeyboardKey.arrowDown);
-    expect(focused(find.byTooltip('Settings')), true);
+    expect(focused(profile), true);
     expect(settings, 0);
-    await press(tester, LogicalKeyboardKey.arrowDown);
-    expect(focused(find.byTooltip('Profile: A very long account display name')), true);
     expect(tester.takeException(), isNull);
   });
 
@@ -869,7 +871,9 @@ void main() {
     await press(tester, LogicalKeyboardKey.enter);
     expect(focused(card(0)), true);
     await press(tester, LogicalKeyboardKey.arrowUp);
-    expect(focused(find.text('Mapped')), true);
+    expect(focused(find.byKey(const ValueKey('discover-type'))), true);
+    await press(tester, LogicalKeyboardKey.arrowRight);
+    await press(tester, LogicalKeyboardKey.arrowRight);
     await press(tester, LogicalKeyboardKey.arrowRight);
     expect(focused(find.byKey(const ValueKey('catalog-watched'))), true);
     await press(tester, LogicalKeyboardKey.arrowDown);
@@ -923,13 +927,14 @@ void main() {
 
   testWidgets('keyboard activation of Settings enters its controls', (tester) async {
     await mount(tester, KeyboardFixture());
-    for (var i = 0; i < 7; i++) {
+    for (var i = 0; i < 4; i++) {
       await press(tester, LogicalKeyboardKey.arrowDown);
     }
-    expect(focused(find.byTooltip('Settings')), true);
+    await press(tester, LogicalKeyboardKey.enter);
+    await press(tester, LogicalKeyboardKey.arrowDown);
+    expect(focused(find.text('Settings')), true);
     await press(tester, LogicalKeyboardKey.enter);
     expect(focused(find.byType(TeddySettingsScreen)), true);
-    expect(focused(find.byTooltip('Settings')), false);
   });
 
   testWidgets('Enter on Home starts its first populated row rather than the banner or remembered card', (tester) async {
@@ -976,9 +981,9 @@ void main() {
     }
   });
 
-  testWidgets('Up at Search, Movies and Shows top controls stays in content', (tester) async {
+  testWidgets('Up at Search and Discover top controls stays in content', (tester) async {
     for (final tv in [false, true]) {
-      for (final section in ['Search', 'Movies', 'Series']) {
+      for (final section in ['Search', 'Discover']) {
         await tester.pumpWidget(const SizedBox.shrink());
         await mount(tester, KeyboardFixture(), tv: tv);
         final destination = find.byWidgetPredicate(
@@ -1023,7 +1028,7 @@ void main() {
   testWidgets('empty Home retains a usable header and compact navigation returns to visible content', (tester) async {
     await mount(tester, KeyboardFixture()..empty = true);
     await press(tester, LogicalKeyboardKey.arrowRight);
-    expect(focused(find.byTooltip('Reload')), true);
+    expect(focused(find.byTooltip('Profile: Tester')), true);
     await press(tester, LogicalKeyboardKey.escape);
     expect(rail(tester, 0).focusNode.hasPrimaryFocus, true);
     await mount(tester, KeyboardFixture(), tv: false, width: 390);
@@ -1053,13 +1058,14 @@ void main() {
       reason: 'A removed retry restores usable Home focus: ${FocusManager.instance.primaryFocus}',
     );
     await press(tester, LogicalKeyboardKey.arrowLeft);
-    for (var i = 0; i < 6; i++) {
+    for (var i = 0; i < 4; i++) {
       await press(tester, LogicalKeyboardKey.arrowDown);
     }
-    expect(focused(find.byTooltip('Reload')), true);
+    expect(focused(find.byTooltip('Profile: Tester')), true);
+    await press(tester, LogicalKeyboardKey.enter);
     client.heldHome = Completer<List<TedHomeRow>>();
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 160));
     rail(tester, 3).focusNode.requestFocus();
     await tester.pump();
     await tester.sendKeyEvent(LogicalKeyboardKey.enter);

@@ -1,3 +1,4 @@
+import '../test_helpers/ted_navigation.dart';
 import 'dart:async';
 import 'dart:ui' show PointerDeviceKind;
 import 'package:flutter/material.dart';
@@ -14,6 +15,7 @@ import 'package:plezy/ted/ted_home_banner.dart';
 import 'package:plezy/ted/ted_personal_thumbnail.dart';
 import 'package:plezy/ted/ted_browse_header.dart';
 import 'package:plezy/ted/ted_movie_detail.dart';
+import 'package:plezy/ted/teddy_ui_scale.dart';
 import 'package:plezy/widgets/hub_section.dart';
 import 'package:plezy/ted/ted_models.dart';
 import 'package:plezy/theme/mono_theme.dart';
@@ -121,6 +123,7 @@ void main() {
     BrowseFixture client, {
     double width = 1200,
     double height = 900,
+    bool scaled = false,
     String displayName = 'Tester',
     VoidCallback? onSettings,
     VoidCallback? onReload,
@@ -136,6 +139,7 @@ void main() {
         child: MaterialApp(
           key: UniqueKey(),
           theme: monoTheme(dark: true),
+          builder: scaled ? (_, child) => TeddyUiScale(child: child!) : null,
           home: Scaffold(
             body: TedBrowseScreen(
               client: client,
@@ -155,7 +159,7 @@ void main() {
   testWidgets('startup destination is active without an Enter press and persistent sidebar stays expanded', (
     tester,
   ) async {
-    await SettingsService.instance.write(SettingsService.teddyStartupSection, TeddySection.movies);
+    await SettingsService.instance.write(SettingsService.teddyStartupSection, TeddySection.discover);
     await SettingsService.instance.write(SettingsService.alwaysKeepSidebarOpen, true);
     final client = BrowseFixture();
     await mount(tester, client);
@@ -173,7 +177,9 @@ void main() {
     var profileRefreshes = 0;
     await mount(tester, client, onReload: () => profileRefreshes++);
     client.pendingHome = Completer<List<TedHomeRow>>();
-    await tester.tap(find.byTooltip('Reload'));
+    await openTedProfileMenu(tester);
+    await tester.tap(find.text('Reload'));
+    await tester.pump(const Duration(milliseconds: 160));
     expect(profileRefreshes, 1);
     await tester.pump();
     client.updateHome!([
@@ -185,7 +191,7 @@ void main() {
     expect(find.byType(MediaCard), findsWidgets);
     expect(find.textContaining('Loading Continue Watching'), findsNothing);
     expect(find.byWidgetPredicate((w) => w is LinearProgressIndicator && w.value == null), findsNothing);
-    await tester.tap(find.byWidgetPredicate((w) => w is NavigationRailItem && (w.label as Text).data == 'Movies'));
+    await tester.tap(find.byWidgetPredicate((w) => w is NavigationRailItem && (w.label as Text).data == 'Discover'));
     await tester.pumpAndSettle();
     expect(find.text('Mapped'), findsOneWidget);
     client.updateHome!([
@@ -229,9 +235,7 @@ void main() {
     }
   });
 
-  testWidgets('sidebar actions stay at the bottom, show the account and keep Settings outside its popup', (
-    tester,
-  ) async {
+  testWidgets('sidebar profile stays at the bottom and contains Reload and Settings', (tester) async {
     var settings = 0, logouts = 0;
     await mount(
       tester,
@@ -249,19 +253,19 @@ void main() {
     expect(find.text('Native tester'), findsOneWidget);
     expect(find.byTooltip('Installed add-ons'), findsNothing);
     expect(tester.getRect(profile).right, lessThanOrEqualTo(220));
-    expect(tester.getTopLeft(reload).dy, greaterThan(700));
-    expect(tester.getBottomLeft(reload).dy, lessThanOrEqualTo(tester.getTopLeft(settingsButton).dy));
-    expect(tester.getBottomLeft(settingsButton).dy, lessThanOrEqualTo(tester.getTopLeft(profile).dy));
+    expect(reload, findsNothing);
+    expect(settingsButton, findsNothing);
     final original = tester.getRect(profile);
     await tester.drag(find.byType(TedHomeBanner), const Offset(0, -400));
     await tester.pumpAndSettle();
     expect(tester.getRect(profile), original);
-    await tester.tap(settingsButton);
+    await openTedProfileMenu(tester);
+    await tester.tap(find.text('Settings'));
     await tester.pumpAndSettle();
     expect(settings, 1);
     await tester.tap(profile);
     await tester.pumpAndSettle();
-    expect(find.text('Settings'), findsOneWidget, reason: 'Only the sidebar, not the popup');
+    expect(find.text('Settings'), findsOneWidget);
     await tester.tap(find.text('Sign out'));
     await tester.pumpAndSettle();
     expect(logouts, 1);
@@ -303,7 +307,7 @@ void main() {
     expect(tester.getSize(sidebar).width, collapsedWidth);
     expect(tester.widgetList<NavigationRailItem>(find.byType(NavigationRailItem)).every((w) => w.isCollapsed), true);
     // Clicking the collapsed icon still opens the selected destination.
-    final movie = find.byWidgetPredicate((w) => w is NavigationRailItem && (w.label as Text).data == 'Movies');
+    final movie = find.byWidgetPredicate((w) => w is NavigationRailItem && (w.label as Text).data == 'Discover');
     await tester.tap(movie);
     await tester.pumpAndSettle();
     expect(tester.widget<NavigationRailItem>(movie).isSelected, true);
@@ -386,7 +390,8 @@ void main() {
       expect(find.text('Sign out'), findsOneWidget);
       await tester.sendKeyEvent(LogicalKeyboardKey.escape);
       await tester.pumpAndSettle();
-      await tester.tap(find.byTooltip('Settings'));
+      await openTedProfileMenu(tester);
+      await tester.tap(find.text('Settings'));
       await tester.pumpAndSettle();
       await tester.tap(find.byType(NavigationDestination).first);
       await tester.pumpAndSettle();
@@ -397,6 +402,45 @@ void main() {
       expect(tester.takeException(), isNull);
     }
     expect(settings, 3);
+  });
+
+  testWidgets('Android cutouts and gesture insets keep the scaled profile menu attached to its avatar', (tester) async {
+    addTearDown(tester.view.resetPadding);
+    addTearDown(tester.view.resetViewPadding);
+    for (final (size, padding, scale) in [
+      (const Size(390, 844), const FakeViewPadding(top: 44, bottom: 24), 125),
+      (const Size(950, 420), const FakeViewPadding(left: 44, right: 18, top: 22, bottom: 16), 80),
+    ]) {
+      await SettingsService.instance.write(SettingsService.teddyUiScalePercent, scale);
+      tester.view.padding = padding;
+      tester.view.viewPadding = padding;
+      await mount(tester, BrowseFixture(), width: size.width, height: size.height, scaled: true);
+      final profile = find.byType(TedAccountMenu);
+      final avatar = tester.getRect(profile);
+      expect(avatar.left, greaterThanOrEqualTo(padding.left));
+      expect(avatar.bottom, lessThanOrEqualTo(size.height - padding.bottom));
+      if (size.width < size.height) {
+        expect(find.text('Tester'), findsNothing);
+        expect(find.byType(NavigationDestination), findsNWidgets(5));
+        final bar = tester.getRect(find.byType(NavigationBar));
+        expect(avatar.center.dy, closeTo(bar.center.dy, .01));
+        expect(bar.bottom, closeTo(size.height - padding.bottom, .01));
+      } else {
+        final sidebar = tester.getRect(find.byKey(const ValueKey('ted-sidebar')));
+        expect(sidebar.left, closeTo(padding.left, .01));
+        expect(sidebar.top, closeTo(padding.top, .01));
+      }
+      await openTedProfileMenu(tester);
+      final menu = find.ancestor(of: find.text('Switch Profile'), matching: find.byType(Material)).first;
+      final bounds = tester.getRect(menu);
+      expect(bounds.bottom, closeTo(avatar.top - 4 * scale / 100, .01));
+      expect(bounds.left, greaterThanOrEqualTo(padding.left));
+      expect(bounds.right, lessThanOrEqualTo(size.width - padding.right));
+      expect(bounds.top, greaterThanOrEqualTo(padding.top));
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    }
   });
 
   testWidgets('home uses shared cards and retains Continue Watching alongside discovery errors', (tester) async {
@@ -498,7 +542,9 @@ void main() {
       tester.state<ScrollableState>(vertical).position.jumpTo(0);
       await tester.pumpAndSettle();
       final imagesBeforeReload = client.imageReads;
-      await tester.tap(find.byTooltip('Reload'));
+      await openTedProfileMenu(tester);
+      await tester.tap(find.text('Reload'));
+      await tester.pump(const Duration(milliseconds: 160));
       await tester.pumpAndSettle();
       await tester.scrollUntilVisible(cw, 200, scrollable: vertical);
       await tester.pumpAndSettle();
@@ -534,12 +580,12 @@ void main() {
     await tester.enterText(find.byType(TextField), 'late');
     await tester.testTextInput.receiveAction(TextInputAction.done);
     await tester.pump();
-    await tester.tap(find.byWidgetPredicate((w) => w is NavigationRailItem && (w.label as Text).data == 'Movies'));
+    await tester.tap(find.byWidgetPredicate((w) => w is NavigationRailItem && (w.label as Text).data == 'Discover'));
     await tester.pumpAndSettle();
     client.held!.complete(TedCatalogPage([], null));
     await tester.pumpAndSettle();
     expect(
-      find.byWidgetPredicate((w) => w is NavigationRailItem && (w.label as Text).data == 'Movies'),
+      find.byWidgetPredicate((w) => w is NavigationRailItem && (w.label as Text).data == 'Discover'),
       findsOneWidget,
     );
     expect(find.byType(MediaCard), findsOneWidget);
@@ -549,7 +595,7 @@ void main() {
   testWidgets('returning from a paged title preserves cards and paging state', (tester) async {
     final client = BrowseFixture();
     await mount(tester, client);
-    await tester.tap(find.byWidgetPredicate((w) => w is NavigationRailItem && (w.label as Text).data == 'Movies'));
+    await tester.tap(find.byWidgetPredicate((w) => w is NavigationRailItem && (w.label as Text).data == 'Discover'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Load more'));
     await tester.pumpAndSettle();

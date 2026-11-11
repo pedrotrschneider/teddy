@@ -219,12 +219,12 @@ void main() {
     expect(find.byIcon(Icons.bookmark_border), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
-  testWidgets('Watch List has only a type filter; Ratings has eight horizontal shelves', (tester) async {
+  testWidgets('Discover Watch List uses the saved collection and Ratings retains eight shelves', (tester) async {
     tester.view.physicalSize = const Size(1440, 1000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    final client = PersonalFixture();
+    final client = PersonalFixture()..saved = true;
     addTearDown(client.auth.close);
     await tester.pumpWidget(
       InputModeTracker(
@@ -239,16 +239,23 @@ void main() {
     await tester.pumpAndSettle();
     Finder nav(String label) =>
         find.byWidgetPredicate((w) => w is NavigationRailItem && (w.label as Text).data == label);
-    await tester.tap(nav('Watch List'));
+    await tester.tap(nav('Discover'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('discover-watchlist')));
     await tester.pumpAndSettle();
     expect(client.calls, ['watchlist/movie']);
     expect(find.byType(TextField), findsNothing);
     expect(find.text('Mapped'), findsNothing);
-    await tester.tap(find.byKey(const ValueKey('watchlist-type')));
+    await tester.tap(find.byKey(const ValueKey('discover-type')));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Series').last);
     await tester.pumpAndSettle();
     expect(client.calls.last, 'watchlist/series');
+    await tester.tap(find.byKey(const ValueKey('discover-watchlist')));
+    await tester.pumpAndSettle();
+    expect(client.calls, ['watchlist/movie', 'watchlist/series']);
+    expect(find.byKey(const ValueKey('catalog-mapped')), findsOneWidget);
+    expect(nav('Watch List'), findsNothing);
     await tester.tap(nav('Ratings'));
     await tester.pumpAndSettle();
     expect(client.calls.where((v) => v.startsWith('ratings/')).length, 8);

@@ -285,8 +285,9 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
   final _ratingLoading = <String>{};
   String _section = 'home', _query = '', _catalog = 'popular';
   String _watchFilter = 'all', _genre = '';
-  String _searchKind = 'movie', _watchlistKind = 'movie';
-  bool _mappedOnly = false;
+  String _searchKind = 'movie', _discoverKind = 'movie';
+  bool _mappedOnly = false, _watchlistOnly = false;
+  bool get _showingWatchlist => _section == 'discover' && _watchlistOnly;
   int _catalogEpoch = 0;
   final _catalogPreview = ValueNotifier<TedTitle?>(null);
   TedTitle? get _catalogSelection => _catalogPreview.value;
@@ -433,8 +434,8 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
               TedHomeRow('rating-${7 - i}', buckets[i].titles, false, buckets[i].issues),
           ];
           ratingCursors = {for (var i = 0; i < buckets.length; i++) 'rating-${7 - i}': buckets[i].nextAfter};
-        case 'watchlist':
-          final page = await widget.client.collection('watchlist', kind: _watchlistKind, after: more ? _after : null);
+        case 'discover' when _watchlistOnly:
+          final page = await widget.client.collection('watchlist', kind: _discoverKind, after: more ? _after : null);
           titles = page.titles;
           after = page.nextAfter;
           issues = page.issues;
@@ -459,9 +460,9 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
           final page = await widget.client.browse(_searchKind, search: query, skip: more ? _skip ?? 0 : 0);
           titles = page.titles;
           skip = page.nextSkip;
-        default:
+        case 'discover':
           final page = await widget.client.browse(
-            section,
+            _discoverKind,
             skip: more ? _skip ?? 0 : 0,
             after: more ? _after : null,
             catalog: _catalog,
@@ -639,13 +640,8 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
     unawaited(_load());
   }
 
-  bool get _catalogView =>
-      _section == 'movie' || _section == 'series' || _section == 'search' || _section == 'watchlist';
-  String get _catalogKind => _section == 'watchlist'
-      ? _watchlistKind
-      : _section == 'search'
-      ? _searchKind
-      : _section;
+  bool get _catalogView => _section == 'discover' || _section == 'search';
+  String get _catalogKind => _section == 'search' ? _searchKind : _discoverKind;
 
   void _changeCatalogFilters(VoidCallback change) {
     setState(() {
@@ -709,7 +705,12 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
       child: HubSection(
         key: key,
         hub: _presentation.hub(
-          TedHomeRow(_section == 'search' ? 'search-$_searchKind' : 'popular-$_section', _titles, false, const []),
+          TedHomeRow(
+            _section == 'search' ? 'search-$_searchKind' : '${_watchlistOnly ? 'watchlist' : 'popular'}-$_discoverKind',
+            _titles,
+            false,
+            const [],
+          ),
         ),
         focusMemory: _catalogFocusMemory,
         icon: _catalogKind == 'movie' ? Icons.movie_outlined : Icons.tv,
@@ -748,16 +749,20 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
     return 24 + 3 + (InputModeTracker.isKeyboardMode(context) ? FocusTheme.focusBorderWidth : 0);
   }
 
-  Widget _catalogControls() => (_section == 'search' || _section == 'watchlist')
+  Widget _catalogControls() => _section == 'search'
       ? _searchControls()
       : _lane(
           'filters',
           TedCatalogFilters(
             horizontalInset: _catalogContentInset,
+            kind: _discoverKind,
+            watchlist: _watchlistOnly,
             mapped: _mappedOnly,
             watched: _watchFilter,
             genre: _genre,
             catalog: _catalog,
+            onKind: (value) => _changeCatalogFilters(() => _discoverKind = value),
+            onWatchlist: (value) => _changeCatalogFilters(() => _watchlistOnly = value),
             onMapped: (value) => _changeCatalogFilters(() => _mappedOnly = value),
             onWatched: (value) => _changeCatalogFilters(() => _watchFilter = value),
             onGenre: (value) => _changeCatalogFilters(() => _genre = value),
@@ -789,13 +794,7 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
                 ],
                 onChanged: (kind) {
                   if (kind != null && kind != _catalogKind) {
-                    _changeCatalogFilters(() {
-                      if (_section == 'watchlist') {
-                        _watchlistKind = kind;
-                      } else {
-                        _searchKind = kind;
-                      }
-                    });
+                    _changeCatalogFilters(() => _searchKind = kind);
                   }
                 },
               ),
@@ -828,7 +827,6 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
               onSubmitted: (_) => _submitSearch(),
             ),
           );
-          if (_section == 'watchlist') return type;
           return constraints.maxWidth >= 480
               ? Row(
                   children: [
@@ -1104,7 +1102,7 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
   }
 
   Future<void> _refreshTitle(TedTitle title, {String? returnStop}) async {
-    if (_section == 'home' || _section == 'ratings' || _section == 'watchlist' || _personal(_section)) {
+    if (_section == 'home' || _section == 'ratings' || _showingWatchlist || _personal(_section)) {
       await _load(returnStop: returnStop);
       return;
     }
@@ -1199,7 +1197,6 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
     grid: true,
     scroll: false,
     onUp: compact ? _focusMain : () => _navFocus.last.requestFocus(),
-    onDown: compact ? () => _bottomKey.currentState?.requestFocus(first: true) : null,
     onRight: compact ? null : () => _focusMain(fromSidebar: true),
     onBack: () => _focusSidebar(origin: _sidebarReturnStop),
     child: TedSidebarControls(
@@ -1207,7 +1204,6 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
       profilePicture: widget.profilePicture,
       onReload: _busy ? null : _reload,
       onSettings: widget.onSettings ?? openSettings,
-      settingsSelected: _settingsVisible,
       onSignOut: widget.onSignOut,
       onSwitchProfile: widget.onSwitchProfile,
       onChangeServer: widget.onChangeServer,
@@ -1425,7 +1421,9 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
   }
 
   @override
-  Widget build(BuildContext context) => TedDefaultFocus(
+  Widget build(BuildContext context) => SafeArea(child: _buildShell());
+
+  Widget _buildShell() => TedDefaultFocus(
     restore: () => _focusMain(fromSidebar: true),
     child: SettingsBuilder(
       prefs: const [
@@ -1492,7 +1490,9 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
                     padding: EdgeInsets.only(
                       top: _section == 'home' && _rows.any((row) => row.titles.isNotEmpty)
                           ? 0
-                          : MediaQuery.paddingOf(context).top + 88,
+                          : wide
+                          ? 88
+                          : 12,
                       bottom: 20,
                     ),
                     child: Column(
@@ -1885,18 +1885,29 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
                   ],
                 ),
               ),
-              if (!wide) _controls(compact: true),
               if (!wide)
                 TedFocusRegion(
                   key: _bottomKey,
                   scroll: false,
                   onUp: _focusMain,
-                  child: NavigationBar(
-                    selectedIndex: selected < 0 ? 0 : selected,
-                    onDestinationSelected: (i) => _activateSection(_sections[i]),
-                    destinations: [
-                      for (var i = 0; i < _sections.length; i++)
-                        NavigationDestination(icon: Icon(_icons[i]), label: TeddySection.values[i].label),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        flex: _sections.length,
+                        child: NavigationBar(
+                          height: 64,
+                          labelBehavior: constraints.maxWidth < 360
+                              ? NavigationDestinationLabelBehavior.alwaysHide
+                              : NavigationDestinationLabelBehavior.alwaysShow,
+                          selectedIndex: _sections.indexOf(_section),
+                          onDestinationSelected: (i) => _activateSection(_sections[i]),
+                          destinations: [
+                            for (var i = 0; i < _sections.length; i++)
+                              NavigationDestination(icon: Icon(_icons[i]), label: TeddySection.values[i].label),
+                          ],
+                        ),
+                      ),
+                      Expanded(child: _controls(compact: true)),
                     ],
                   ),
                 ),

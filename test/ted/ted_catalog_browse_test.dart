@@ -1,3 +1,4 @@
+import '../test_helpers/ted_navigation.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
@@ -118,7 +119,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await tester.tap(destination('Movies'));
+    await tester.tap(destination('Discover'));
     await tester.pumpAndSettle();
   }
 
@@ -150,8 +151,9 @@ void main() {
       homeRatios[kind] = bounds.height / bounds.width;
     }
     for (final section in ['Movies', 'Series']) {
-      await tester.tap(destination(section));
+      await tester.tap(destination('Discover'));
       await tester.pumpAndSettle();
+      await chooseTedDiscoverType(tester, section);
       final card = find.byType(MediaCard).first;
       final poster = find.descendant(of: card, matching: find.byType(OptimizedMediaImage)).first;
       final bounds = tester.getRect(poster);
@@ -195,8 +197,9 @@ void main() {
     final homeLeft = tester.getTopLeft(homePoster).dx;
     double? filterGap;
     for (final section in ['Movies', 'Series']) {
-      await tester.tap(destination(section));
+      await tester.tap(destination('Discover'));
       await tester.pumpAndSettle();
+      await chooseTedDiscoverType(tester, section);
       final banner = find.byKey(const ValueKey('catalog-banner'));
       final description = find.descendant(
         of: banner,
@@ -204,7 +207,7 @@ void main() {
           (w) => w is Text && (w.data == 'Initial 0' || w.data == 'Enriched description'),
         ),
       );
-      final mapped = find.byKey(const ValueKey('catalog-mapped'));
+      final mapped = find.byKey(const ValueKey('discover-type'));
       final poster = firstPoster(find.byType(HubSection));
       final posterBounds = tester.getRect(poster);
       expect(posterBounds.left, closeTo(homeLeft, .01), reason: '$section keeps Home row spacing');
@@ -241,12 +244,13 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
       await mount(tester, CatalogBrowseFixture(), tv: false, size: size);
       for (final section in ['Movies', 'Series']) {
-        await tester.tap(destination(section));
+        await tester.tap(destination('Discover'));
         await tester.pumpAndSettle();
+        await chooseTedDiscoverType(tester, section);
         final poster = find
             .descendant(of: find.byType(MediaCard).first, matching: find.byType(OptimizedMediaImage))
             .first;
-        final mapped = find.byKey(const ValueKey('catalog-mapped'));
+        final mapped = find.byKey(const ValueKey('discover-type'));
         expect(tester.getTopLeft(mapped).dx, closeTo(tester.getTopLeft(poster).dx, .01));
         InputModeTracker.reportNonPointerInput();
         await tester.pumpAndSettle();
@@ -277,7 +281,7 @@ void main() {
       tester.widget<DropdownButtonFormField<String>>(find.byKey(const ValueKey('catalog-order'))).onChanged,
       isNull,
     );
-    await tester.tap(destination('Series'));
+    await chooseTedDiscoverType(tester, 'Series');
     await tester.pumpAndSettle();
     expect(client.reads.last, containsPair('kind', 'series'));
     expect(client.reads.last, containsPair('watched', 'partial'));
@@ -294,8 +298,10 @@ void main() {
       await key(tester, LogicalKeyboardKey.enter);
       for (final section in ['Movies', 'Series']) {
         if (section == 'Series') {
-          await key(tester, LogicalKeyboardKey.escape); // filters -> Movies sidebar
-          await key(tester, LogicalKeyboardKey.arrowDown);
+          await key(tester, LogicalKeyboardKey.arrowUp);
+          await chooseTedDiscoverType(tester, section);
+          tester.widget<NavigationRailItem>(destination('Discover')).focusNode.requestFocus();
+          await tester.pumpAndSettle();
           await key(tester, LogicalKeyboardKey.enter);
         }
         void expectSelection(int index) {
@@ -314,21 +320,15 @@ void main() {
         await key(tester, LogicalKeyboardKey.arrowRight);
         expectSelection(1);
         await key(tester, LogicalKeyboardKey.escape);
-        final menuItem = destination(section);
+        final menuItem = destination('Discover');
         expect(tester.widget<NavigationRailItem>(menuItem).focusNode.hasPrimaryFocus, true);
         await key(tester, LogicalKeyboardKey.arrowRight);
         expectSelection(1);
         await key(tester, LogicalKeyboardKey.arrowUp);
-        expect(
-          focused(find.byKey(ValueKey(section == 'Movies' ? 'catalog-mapped' : 'catalog-watched'))),
-          true,
-          reason: 'Up enters the remembered filter in $section (TV: $tv)',
-        );
-        if (section == 'Series') {
-          await key(tester, LogicalKeyboardKey.arrowLeft);
-          expect(focused(find.byKey(const ValueKey('catalog-mapped'))), true);
+        expect(focused(find.byKey(const ValueKey('discover-type'))), true);
+        for (var i = 0; i < 3; i++) {
+          await key(tester, LogicalKeyboardKey.arrowRight);
         }
-        await key(tester, LogicalKeyboardKey.arrowRight);
         expect(focused(find.byKey(const ValueKey('catalog-watched'))), true);
         await key(tester, LogicalKeyboardKey.arrowDown);
         expectSelection(1);
@@ -347,9 +347,9 @@ void main() {
       expect(find.byType(HubSection), findsNothing);
       expect(find.text('No results.'), findsOneWidget);
       await key(tester, LogicalKeyboardKey.arrowRight);
-      expect(focused(find.byKey(const ValueKey('catalog-mapped'))), true);
+      expect(focused(find.byKey(const ValueKey('discover-type'))), true);
       await key(tester, LogicalKeyboardKey.arrowRight);
-      expect(focused(find.byKey(const ValueKey('catalog-watched'))), true);
+      expect(focused(find.byKey(const ValueKey('discover-watchlist'))), true);
       expect(tester.takeException(), isNull);
     }
   });
@@ -358,12 +358,15 @@ void main() {
     final client = CatalogBrowseFixture();
     await mount(tester, client);
     for (final section in ['Movies', 'Series']) {
-      await tester.tap(destination(section));
+      await tester.tap(destination('Discover'));
       await tester.pumpAndSettle();
+      await chooseTedDiscoverType(tester, section);
       client.details.clear();
       final banner = find.byKey(const ValueKey('catalog-banner'));
       expect(find.descendant(of: banner, matching: find.byType(IconButton)), findsNothing);
       expect(find.descendant(of: banner, matching: find.byType(FilledButton)), findsNothing);
+      tester.widget<NavigationRailItem>(destination('Discover')).focusNode.requestFocus();
+      await tester.pumpAndSettle();
       await key(tester, LogicalKeyboardKey.arrowRight, settle: Duration.zero);
       // Index 4 triggers legitimate pagination; measure focus-only rebuilds before that boundary.
       final shelf = tester.widget<HubSection>(find.byType(HubSection));

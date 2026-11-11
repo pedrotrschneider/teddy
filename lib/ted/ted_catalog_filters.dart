@@ -25,19 +25,23 @@ const tedCatalogGenres = [
 ];
 
 class TedCatalogFilters extends StatelessWidget {
-  final bool mapped;
-  final String watched, genre, catalog;
+  final bool mapped, watchlist;
+  final String kind, watched, genre, catalog;
   final double horizontalInset;
-  final ValueChanged<bool> onMapped;
-  final ValueChanged<String> onWatched, onGenre, onCatalog;
+  final ValueChanged<bool> onMapped, onWatchlist;
+  final ValueChanged<String> onKind, onWatched, onGenre, onCatalog;
   const TedCatalogFilters({
     super.key,
     this.horizontalInset = 28,
+    required this.kind,
+    required this.watchlist,
     required this.mapped,
     required this.watched,
     required this.genre,
     required this.catalog,
     required this.onMapped,
+    required this.onWatchlist,
+    required this.onKind,
     required this.onWatched,
     required this.onGenre,
     required this.onCatalog,
@@ -51,28 +55,37 @@ class TedCatalogFilters extends StatelessWidget {
       runSpacing: 12,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
+        _select('Type', 'discover-type', kind, const {'movie': 'Movies', 'series': 'Series'}, onKind),
         FilterChip(
-          key: const ValueKey('catalog-mapped'),
-          label: const Text('Mapped'),
-          selected: mapped,
-          onSelected: onMapped,
+          key: const ValueKey('discover-watchlist'),
+          label: const Text('Watch List'),
+          selected: watchlist,
+          onSelected: onWatchlist,
         ),
-        _select(
-          'Watch status',
-          'catalog-watched',
-          watched,
-          const {'all': 'All', 'watched': 'Watched', 'fully': 'Fully Watched', 'partial': 'Partially Watched'},
-          onWatched,
-          width: 220,
-        ),
-        _select('Genre', 'catalog-genre', genre, {
-          for (final value in tedCatalogGenres) value: value.isEmpty ? 'All genres' : value,
-        }, onGenre),
-        _select('Catalog', 'catalog-order', catalog, const {
-          'popular': 'Popular',
-          'new': 'New',
-        }, mapped || watched != 'all' ? null : onCatalog),
-        if (mapped || watched != 'all') const Text('Saved titles and history, A–Z.'),
+        if (!watchlist) ...[
+          FilterChip(
+            key: const ValueKey('catalog-mapped'),
+            label: const Text('Mapped'),
+            selected: mapped,
+            onSelected: onMapped,
+          ),
+          _select(
+            'Watch status',
+            'catalog-watched',
+            watched,
+            const {'all': 'All', 'watched': 'Watched', 'fully': 'Fully Watched', 'partial': 'Partially Watched'},
+            onWatched,
+            width: 172,
+          ),
+          _select('Genre', 'catalog-genre', genre, {
+            for (final value in tedCatalogGenres) value: value.isEmpty ? 'All genres' : value,
+          }, onGenre),
+          _select('Catalog', 'catalog-order', catalog, const {
+            'popular': 'Popular',
+            'new': 'New',
+          }, mapped || watched != 'all' ? null : onCatalog),
+          if (mapped || watched != 'all') const Text('Saved titles and history, A–Z.'),
+        ],
       ],
     ),
   );
@@ -83,7 +96,7 @@ class TedCatalogFilters extends StatelessWidget {
     String value,
     Map<String, String> values,
     ValueChanged<String>? changed, {
-    double width = 180,
+    double width = 144,
   }) => SizedBox(
     width: width,
     child: DropdownButtonFormField<String>(

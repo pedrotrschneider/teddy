@@ -226,6 +226,24 @@ class _LibraryDensityPref extends Pref<int> {
       svc.writeInt(key, value.clamp(LibraryDensity.min, LibraryDensity.max));
 }
 
+class _TeddyStartupSectionPref extends EnumPref<TeddySection> {
+  const _TeddyStartupSectionPref()
+    : super('teddy_startup_section', values: TeddySection.values, defaultValue: TeddySection.home);
+
+  @override
+  TeddySection fromJson(Object? value) => switch (value) {
+    'movies' || 'series' || 'watchlist' => TeddySection.discover,
+    _ => super.fromJson(value),
+  };
+
+  @override
+  TeddySection readFrom(BaseSharedPreferencesService svc) {
+    final stored = svc.readNullableString(key);
+    if (stored == 'movies' || stored == 'series' || stored == 'watchlist') return TeddySection.discover;
+    return super.readFrom(svc);
+  }
+}
+
 class AutomotiveUiScale {
   static const double min = 1.0;
   static const double max = 2.0;
@@ -722,11 +740,7 @@ class SettingsService extends BaseSharedPreferencesService {
     transform: (v) => v.clamp(75, 300),
   );
   static const teddyAutoPlayNextEpisode = BoolPref('teddy_auto_play_next_episode');
-  static const teddyStartupSection = EnumPref<TeddySection>(
-    'teddy_startup_section',
-    values: TeddySection.values,
-    defaultValue: TeddySection.home,
-  );
+  static const EnumPref<TeddySection> teddyStartupSection = _TeddyStartupSectionPref();
   static final teddyDownloadChunkMiB = IntPref(
     'teddy_download_chunk_mib',
     defaultValue: 512,

@@ -1,3 +1,4 @@
+import '../test_helpers/ted_navigation.dart';
 import 'dart:io';
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -91,7 +92,8 @@ void main() {
 
   testWidgets('show, season and episode share a fixed Back button and preserve their parent flow', (tester) async {
     await mount(tester, SeriesDetailFixture());
-    await tap(tester, destination('Series'));
+    await tap(tester, destination('Discover'));
+    await chooseTedDiscoverType(tester, 'Series');
     await tap(tester, find.byType(MediaCard).first);
     await fixedAfterScroll(tester, TedSeriesDetail);
     await tap(tester, find.byType(MediaCard).first);
@@ -110,7 +112,8 @@ void main() {
 
   testWidgets('Android system Back follows episode, season, show and closes dialogs first', (tester) async {
     await mount(tester, SeriesDetailFixture());
-    await tap(tester, destination('Series'));
+    await tap(tester, destination('Discover'));
+    await chooseTedDiscoverType(tester, 'Series');
     await tap(tester, find.byType(MediaCard).first);
     await tap(tester, find.byType(MediaCard).first);
     await tap(tester, find.byType(MediaCard).first);
@@ -138,18 +141,18 @@ void main() {
     expect(find.byType(TedSeriesDetail), findsNothing);
     await tester.binding.handlePopRoute();
     await tester.pumpAndSettle();
-    expect(destination('Series'), findsOneWidget);
+    expect(destination('Discover'), findsOneWidget);
   });
 
   testWidgets('movie and person Back stay fixed; Up reaches Back and sidebar Right restores it', (tester) async {
     await mount(tester, PersonFixture());
-    await tap(tester, destination('Movies'));
+    await tap(tester, destination('Discover'));
     await tap(tester, find.byType(MediaCard).first);
     await fixedAfterScroll(tester, TedMovieDetail);
     await press(tester, LogicalKeyboardKey.arrowUp);
     expect(focused(back), true);
     await press(tester, LogicalKeyboardKey.arrowLeft);
-    expect(focused(destination('Movies')), true);
+    expect(focused(destination('Discover')), true);
     await press(tester, LogicalKeyboardKey.arrowRight);
     expect(focused(back), true);
     await press(tester, LogicalKeyboardKey.arrowDown);
@@ -168,10 +171,10 @@ void main() {
     for (final tv in [false, true]) {
       await SettingsService.instance.write(SettingsService.alwaysKeepSidebarOpen, false);
       await mount(tester, PersonFixture(), tv: tv);
-      await tap(tester, destination('Movies'));
+      await tap(tester, destination('Discover'));
       await tap(tester, find.byType(MediaCard).first);
       expect(tester.getTopLeft(back), const Offset(88, 0));
-      expect(tester.getSize(destination('Movies')).width, lessThan(100));
+      expect(tester.getSize(destination('Discover')).width, lessThan(100));
       await tap(tester, back);
       expect(find.byType(TedMovieDetail), findsNothing);
       expect(tester.takeException(), isNull);
@@ -180,7 +183,7 @@ void main() {
 
   testWidgets('compact media Back stays fixed and clears Mac window controls without a rail', (tester) async {
     await mount(tester, PersonFixture(), tv: false, width: 640);
-    await tap(tester, find.text('Movies'));
+    await tap(tester, find.text('Discover'));
     await tap(tester, find.byType(MediaCard).first);
     expect(find.byType(NavigationBar), findsOneWidget);
     final position = tester.getTopLeft(back);
@@ -198,13 +201,13 @@ void main() {
 
   testWidgets('Settings retains sidebar, modal precedence and caller; a destination replaces it', (tester) async {
     await mount(tester, PersonFixture());
-    await tap(tester, destination('Movies'));
+    await tap(tester, destination('Discover'));
     await tap(tester, find.byType(MediaCard).first);
-    await tap(tester, find.byTooltip('Settings'));
+    await openTedProfileMenu(tester);
+    await tap(tester, find.text('Settings'));
     expect(find.byType(TeddySettingsScreen), findsOneWidget);
-    expect(destination('Movies'), findsOneWidget);
+    expect(destination('Discover'), findsOneWidget);
     expect(tester.getTopLeft(find.byType(TeddySettingsScreen)).dx, 220);
-    expect(tester.widget<NavigationRailItem>(destination('Settings')).isSelected, true);
     await tap(tester, find.text('Startup Section'));
     expect(find.byType(AlertDialog), findsOneWidget);
     await press(tester, LogicalKeyboardKey.escape);
@@ -215,11 +218,12 @@ void main() {
     await press(tester, LogicalKeyboardKey.escape);
     expect(find.byType(TeddySettingsScreen), findsNothing);
     expect(find.byType(TedMovieDetail), findsOneWidget);
-    await tap(tester, find.byTooltip('Settings'));
-    await tap(tester, destination('Series'));
+    await openTedProfileMenu(tester);
+    await tap(tester, find.text('Settings'));
+    await tap(tester, destination('Home'));
     expect(find.byType(TeddySettingsScreen), findsNothing);
     expect(find.byType(TedMovieDetail), findsNothing);
-    expect(tester.widget<NavigationRailItem>(destination('Series')).isSelected, true);
+    expect(tester.widget<NavigationRailItem>(destination('Home')).isSelected, true);
     expect(tester.takeException(), isNull);
   });
 
@@ -228,7 +232,8 @@ void main() {
       () => Stream.value(const LicenseEntryWithLineBreaks(['shell-navigation-fixture'], 'Test license')),
     );
     await mount(tester, PersonFixture(), tv: false);
-    await tap(tester, find.byTooltip('Settings'));
+    await openTedProfileMenu(tester);
+    await tap(tester, find.text('Settings'));
     await tester.scrollUntilVisible(
       find.text('Open source licenses'),
       500,
