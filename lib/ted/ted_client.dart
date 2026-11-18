@@ -939,6 +939,16 @@ class TedClient {
     }
   }
 
+  Future<TedTitlePreferences> titlePreferences(TedMediaIdentity media) async {
+    if (!['movie', 'series'].contains(media.kind) || !media.valid) throw const TedFailure('invalid_response');
+    final scope = _sourceScope;
+    final state = TedTitlePreferences.fromJson(
+      await auth.json('GET', '/api/client/v1/titles/${media.kind}/${Uri.encodeComponent(media.id)}/preferences'),
+    );
+    if (scope != _sourceScope) throw const TedFailure('sign_in_required');
+    return state;
+  }
+
   Future<TedTitlePreferences> setTitlePreference(
     TedMediaIdentity media,
     String field, {

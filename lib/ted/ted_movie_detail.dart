@@ -201,15 +201,7 @@ class TedMovieDetailState extends State<TedMovieDetail> {
           _mapped = page.mapped ? page : null;
           // A user-selected Stremio release survives detail/watch refreshes.
           if (!_providerInitialized || _mapped == null) {
-            _provider =
-                _stremio?.preferredSource != null ||
-                    _savedSeasonSource?.provider == 'stremio' &&
-                        _stremio != null &&
-                        _savedSeasonSource!.match(_stremio!) != null
-                ? 'stremio'
-                : page.mapped
-                ? 'mapped'
-                : 'stremio';
+            _provider = page.mapped ? 'mapped' : 'stremio';
           }
           _providerInitialized = true;
         });
@@ -292,11 +284,6 @@ class TedMovieDetailState extends State<TedMovieDetail> {
         page.preferredSource ??
         _savedSeasonSource?.match(page) ??
         (firstLoad ? page.choices.firstOrNull?.id : null);
-    if (firstLoad &&
-        (page.preferredSource != null ||
-            _savedSeasonSource?.provider == 'stremio' && _savedSeasonSource?.match(page) != null)) {
-      _provider = 'stremio';
-    }
   }
 
   bool get _playable =>

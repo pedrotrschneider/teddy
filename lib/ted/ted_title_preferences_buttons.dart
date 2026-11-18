@@ -45,40 +45,7 @@ class _TedTitlePreferencesButtonsState extends State<TedTitlePreferencesButtons>
   }
 
   Future<void> _rate(int? current) async {
-    // A sentinel distinguishes clearing a rating from cancelling the dialog.
-    final choice = await showDialog<int>(
-      context: context,
-      builder: (context) => SimpleDialog(
-        title: Text('Rate ${widget.title.name}'),
-        children: [
-          TedFocusRegion(
-            autofocus: true,
-            grid: true,
-            onBack: () => Navigator.pop(context),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (var i = 1; i <= 7; i++)
-                  SimpleDialogOption(
-                    onPressed: () => Navigator.pop(context, i),
-                    child: Row(
-                      children: [
-                        TedRatingBadge(rating: i),
-                        const SizedBox(width: 12),
-                        Expanded(child: Text(tedRatingNames[i - 1])),
-                        if (i == current) const Icon(Icons.check),
-                      ],
-                    ),
-                  ),
-                if (current != null)
-                  SimpleDialogOption(onPressed: () => Navigator.pop(context, 0), child: const Text('Clear rating')),
-                SimpleDialogOption(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
+    final choice = await showTedRatingPicker(context, title: widget.title.name, current: current);
     if (choice != null && mounted) await _save('rating', rating: choice == 0 ? null : choice);
   }
 
@@ -119,4 +86,41 @@ class _TedTitlePreferencesButtonsState extends State<TedTitlePreferencesButtons>
       ],
     );
   }
+}
+
+/// Returns zero for Clear rating and null when the picker is dismissed.
+Future<int?> showTedRatingPicker(BuildContext context, {required String title, required int? current}) {
+  return showDialog<int>(
+    context: context,
+    builder: (context) => SimpleDialog(
+      title: Text('Rate $title'),
+      children: [
+        TedFocusRegion(
+          autofocus: true,
+          grid: true,
+          onBack: () => Navigator.pop(context),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = tedRatingNames.length; i > 0; i--)
+                SimpleDialogOption(
+                  onPressed: () => Navigator.pop(context, i),
+                  child: Row(
+                    children: [
+                      TedRatingBadge(rating: i),
+                      const SizedBox(width: 12),
+                      Expanded(child: Text(tedRatingNames[i - 1])),
+                      if (i == current) const Icon(Icons.check),
+                    ],
+                  ),
+                ),
+              if (current != null)
+                SimpleDialogOption(onPressed: () => Navigator.pop(context, 0), child: const Text('Clear rating')),
+              SimpleDialogOption(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+            ],
+          ),
+        ),
+      ],
+    ),
+  );
 }

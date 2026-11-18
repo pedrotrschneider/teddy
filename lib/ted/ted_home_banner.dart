@@ -41,6 +41,7 @@ class TedHomeBanner extends StatefulWidget {
   final bool showReleaseDate;
   final DateTime? releaseDate;
   final Future<void> Function(TedTitle) onPlay, onOpen;
+  final Future<void> Function(TedTitle)? onMenu;
   final VoidCallback onBack;
   final VoidCallback? onNavigateUp, onNavigateDown;
   final void Function(TedMediaIdentity media, TedMetadataSnapshot snapshot)? onMetadata;
@@ -64,6 +65,7 @@ class TedHomeBanner extends StatefulWidget {
     this.releaseDate,
     required this.onPlay,
     required this.onOpen,
+    this.onMenu,
     required this.onBack,
     this.onNavigateUp,
     this.onNavigateDown,
@@ -107,7 +109,7 @@ class TedHomeBannerState extends State<TedHomeBanner> with WidgetsBindingObserve
   int _index = 0, _generation = 0;
   TedClient? _owner;
   (Uri?, int?)? _scope;
-  bool _paused = false, _resumed = true, _playing = false;
+  bool _paused = false, _resumed = true, _playing = false, _menuOpen = false;
   @override
   void initState() {
     super.initState();
@@ -289,6 +291,7 @@ class TedHomeBannerState extends State<TedHomeBanner> with WidgetsBindingObserve
         _paused ||
         !_resumed ||
         _playing ||
+        _menuOpen ||
         !TickerMode.valuesOf(context).enabled ||
         MediaQuery.maybeOf(context)?.disableAnimations == true) {
       return;
@@ -345,6 +348,18 @@ class TedHomeBannerState extends State<TedHomeBanner> with WidgetsBindingObserve
     }
   }
 
+  Future<void> _openMenu() async {
+    if (_menuOpen || _slides.isEmpty) return;
+    _menuOpen = true;
+    _timer?.cancel();
+    try {
+      await widget.onMenu?.call(_slides[_index].title);
+    } finally {
+      _menuOpen = false;
+      if (mounted) _schedule();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_slides.isEmpty) return const SizedBox.shrink();
@@ -361,7 +376,7 @@ class TedHomeBannerState extends State<TedHomeBanner> with WidgetsBindingObserve
             : wide
             ? (MediaQuery.sizeOf(context).height * .64).clamp(360.0, 740.0)
             : math.min(500.0, math.max(box.maxWidth < 420 ? 480.0 : 360.0, MediaQuery.sizeOf(context).height * .75));
-        return Focus(
+        final banner = Focus(
           focusNode: _focus,
           skipTraversal: true,
           canRequestFocus: !passive,
@@ -512,6 +527,16 @@ class TedHomeBannerState extends State<TedHomeBanner> with WidgetsBindingObserve
             ),
           ),
         );
+        return widget.onMenu == null
+            ? banner
+            : GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onLongPressDown: (_) => _timer?.cancel(),
+                onLongPressCancel: _schedule,
+                onLongPress: _openMenu,
+                onSecondaryTap: _openMenu,
+                child: banner,
+              );
       },
     );
   }

@@ -42,6 +42,8 @@ import 'ted_focus_region.dart';
 import 'ted_focus_recovery.dart';
 import 'ted_catalog_filters.dart';
 import 'ted_movie_detail.dart';
+import 'ted_rating.dart';
+import 'ted_title_preferences_buttons.dart';
 import 'ted_person_detail.dart';
 import 'ted_series_detail.dart';
 import 'ted_metadata_models.dart';
@@ -862,6 +864,7 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
                   contentHorizontalInset: _catalogContentInset,
                   onPlay: _playBanner,
                   onOpen: _open,
+                  onMenu: (title) => _menu(title, banner: true),
                   onBack: _focusSidebar,
                 ),
         ),
@@ -1121,11 +1124,33 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
     }
   }
 
-  Future<void> _menu(TedTitle title) async {
-    if (!title.media.playable) {
-      await _open(title);
+  Future<void> _menu(TedTitle title, {bool banner = false}) async {
+    final client = widget.client;
+    final account = (client.auth.server, client.auth.userId);
+    final section = _section;
+    bool sameAccount() => client == widget.client && account == (client.auth.server, client.auth.userId);
+    final episode = title.media.kind == 'episode';
+    final media = episode ? title.parent ?? TedMediaIdentity('series', title.media.id.split(':').first) : title.media;
+    final name = episode ? (title.seriesName.isEmpty ? 'this series' : title.seriesName) : title.name;
+    TedTitlePreferences? preferences;
+    if (!episode) {
+      preferences = TedTitlePreferences(title.watchlist, title.userRating);
+    } else if (banner) {
+      try {
+        preferences = await client.titlePreferences(media);
+      } catch (error) {
+        if (mounted && sameAccount()) _preferenceError(error);
+        return;
+      }
+    }
+    if (!mounted ||
+        !sameAccount() ||
+        _section != section ||
+        _details.isNotEmpty ||
+        ModalRoute.of(context)?.isCurrent == false) {
       return;
     }
+    final personal = preferences;
     final action = await showModalBottomSheet<String>(
       context: context,
       builder: (context) => TedFocusRegion(
@@ -1136,29 +1161,73 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              ListTile(title: Text(title.name), subtitle: const Text('TED')),
-              ListTile(
-                leading: const Icon(Icons.play_arrow),
-                title: Text(title.ready ? 'Play / Resume' : 'Find sources'),
-                onTap: () => Navigator.pop(context, 'play'),
-              ),
-              if (title.media.kind == 'episode')
+              ListTile(title: Text(banner ? name : title.name)),
+              if (!banner && title.media.playable) ...[
                 ListTile(
-                  leading: const Icon(Icons.refresh),
-                  title: const Text('Reload thumbnails'),
-                  onTap: () => Navigator.pop(context, 'thumbnails'),
+                  leading: const Icon(Icons.play_arrow),
+                  title: Text(title.ready ? 'Play / Resume' : 'Find sources'),
+                  onTap: () => Navigator.pop(context, 'play'),
                 ),
-              ListTile(
-                leading: Icon(title.played ? Icons.remove_done : Icons.done),
-                title: Text(title.played ? 'Mark unwatched' : 'Mark watched'),
-                onTap: () => Navigator.pop(context, 'watch'),
-              ),
+                if (episode)
+                  ListTile(
+                    leading: const Icon(Icons.refresh),
+                    title: const Text('Reload thumbnails'),
+                    onTap: () => Navigator.pop(context, 'thumbnails'),
+                  ),
+                ListTile(
+                  leading: Icon(title.played ? Icons.remove_done : Icons.done),
+                  title: Text(title.played ? 'Mark unwatched' : 'Mark watched'),
+                  onTap: () => Navigator.pop(context, 'watch'),
+                ),
+              ],
+              if (!banner && !title.media.playable)
+                ListTile(
+                  leading: const Icon(Icons.info_outline),
+                  title: const Text('Details'),
+                  onTap: () => Navigator.pop(context, 'details'),
+                ),
+              if (personal != null) ...[
+                ListTile(
+                  leading: Icon(personal.watchlist ? Icons.bookmark : Icons.bookmark_border),
+                  title: Text(personal.watchlist ? 'Remove from Watch List' : 'Add to Watch List'),
+                  onTap: () => Navigator.pop(context, 'watchlist'),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.rate_review_outlined),
+                  title: Text(episode ? 'Rate series' : 'Rate'),
+                  onTap: () => Navigator.pop(context, 'rating'),
+                ),
+              ],
             ],
           ),
         ),
       ),
     );
-    if (!mounted || action == null) return;
+    if (!mounted || !sameAccount() || action == null) return;
+    if (action == 'details') {
+      await _open(title);
+      return;
+    }
+    if (personal != null && (action == 'watchlist' || action == 'rating')) {
+      try {
+        final rating = action == 'rating'
+            ? await showTedRatingPicker(context, title: name, current: personal.rating)
+            : null;
+        if (!mounted || !sameAccount() || action == 'rating' && rating == null) return;
+        final saved = await client.setTitlePreference(
+          media,
+          action,
+          watchlist: action == 'watchlist' ? !personal.watchlist : null,
+          rating: rating == 0 ? null : rating,
+        );
+        if (!mounted || !sameAccount()) return;
+        _applyPreferences(media, saved);
+        if (_section == 'ratings' || _showingWatchlist || _section == 'home' && action == 'watchlist') await _load();
+      } catch (error) {
+        if (mounted && sameAccount()) _preferenceError(error);
+      }
+      return;
+    }
     try {
       if (action == 'thumbnails') {
         await _reload();
@@ -1175,6 +1244,26 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
     } catch (_) {
       if (mounted) setState(() => _error = const TedFailure('unavailable').message);
     }
+  }
+
+  void _preferenceError(Object error) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(error is TedFailure ? error.message : 'Cannot save this preference.')));
+  }
+
+  void _applyPreferences(TedMediaIdentity media, TedTitlePreferences state) {
+    TedTitle update(TedTitle title) => title.media == media ? title.withPreferences(state) : title;
+    List<TedTitle> updateTitles(List<TedTitle> titles) =>
+        titles.any((title) => title.media == media) ? titles.map(update).toList() : titles;
+    setState(() {
+      _titles = updateTitles(_titles);
+      if (_catalogSelection case final TedTitle selection) _catalogSelection = update(selection);
+      _rows = [
+        for (final row in _rows)
+          TedHomeRow(row.id, updateTitles(row.titles), row.unavailable, row.issues, loading: row.loading),
+      ];
+    });
   }
 
   void _focusSidebar({String? origin}) {
@@ -1509,6 +1598,7 @@ class TedBrowseScreenState extends State<TedBrowseScreen> {
                               maxHeight: bannerMaxHeight,
                               onPlay: _playBanner,
                               onOpen: _open,
+                              onMenu: (title) => _menu(title, banner: true),
                               onBack: () => _focusSidebar(
                                 origin: _bannerKey.currentState?.controlsHaveFocus == true
                                     ? 'banner-controls'

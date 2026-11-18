@@ -168,7 +168,9 @@ void main() {
       tester,
     ) async {
       plays.clear();
-      final client = MovieFixture()..heldMapping = Completer<TedSourcePage>();
+      final client = MovieFixture()
+        ..heldMapping = Completer<TedSourcePage>()
+        ..sourcePage = TedSourcePage(false, false, addonPage.choices, [], null, preferredSource: secondSource);
       addTearDown(client.auth.close);
       (await TvDetectionService.getInstance()).setForceTv(true);
       tester.view.physicalSize = const Size(1512, 950);
@@ -191,7 +193,8 @@ void main() {
                 onClose: () {},
                 onSidebar: () {},
                 onHeader: () {},
-                onPlay: (_, _, _) async {
+                onPlay: (_, source, _) async {
+                  expect(source, isNull, reason: 'A preferred add-on returned before the mapping must not win');
                   await nav.currentState!.push<void>(
                     MaterialPageRoute(
                       builder: (context) => Scaffold(
@@ -428,8 +431,11 @@ void main() {
         await tester.pump();
         expect(tester.widget<FilledButton>(getPlay()).onPressed, isNotNull);
         expect(tester.widget<OutlinedButton>(find.byKey(const ValueKey('movie-source-file'))).onPressed, isNull);
-        client.heldSources!.complete(addonPage);
+        client.heldSources!.complete(
+          TedSourcePage(false, false, addonPage.choices, [], null, preferredSource: secondSource),
+        );
         await tester.pumpAndSettle();
+        expect(find.text('RD Mapped'), findsOneWidget);
         await tester.tap(getPlay());
         await tester.pumpAndSettle();
         expect(plays.last, (null, false));
@@ -445,6 +451,11 @@ void main() {
         expect(find.text('Mark unwatched'), findsOneWidget);
         final pill = tester.getRect(getPlay());
         expect((tester.getRect(provider()).center.dy - pill.center.dy).abs(), lessThan(4));
+        await tester.tap(provider());
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('Stremio').last);
+        await tester.pumpAndSettle();
+        expect(find.text('Second release'), findsOneWidget);
         expect(tester.takeException(), isNull);
       }
     },
