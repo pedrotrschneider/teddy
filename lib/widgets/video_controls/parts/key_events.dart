@@ -92,6 +92,19 @@ extension _PlexVideoControlsKeyEventMethods on _PlexVideoControlsState {
       });
     }
 
+    // Claim the whole Back press: auto-hide or idle cancellation may remove
+    // the preview before KeyUp, which must still not exit the player.
+    final seekPreviewOwnsPress = event is KeyDownEvent
+        ? _desktopControlsKey.currentState?.hasSeekPreview == true
+        : _seekPreviewOwnsBackPress;
+    _seekPreviewOwnsBackPress = event is KeyUpEvent ? false : seekPreviewOwnsPress;
+    if (seekPreviewOwnsPress) {
+      return handlePlayerNavigationKeyAction(event, navigationKey, () {
+        _desktopControlsKey.currentState?.cancelSeekPreview();
+        _restartHideTimerForCurrentPlaybackState();
+      });
+    }
+
     // A skip prompt is a local layer like the sheet and the content strip
     // above it: Select takes the skip, Back declines it. Without this stage the
     // only key that reads as "no thanks" on a remote is also the one that walks
@@ -258,9 +271,16 @@ extension _PlexVideoControlsKeyEventMethods on _PlexVideoControlsState {
     // for down, repeat and up alike: anything that escapes this node reaches
     // Android's own MediaSession, whose fixed 15-second fast-forward re-enters
     // the screen once per auto-repeat and drags the playhead minutes away
-    // (#1375). Only the initial press acts — the repeats are the same press.
+    // (#1375). TV repeats move the preview; other players act on the initial
+    // press only. No event in the press may escape to Android's MediaSession.
     final seekDirection = classifyPlayerSkipKey(event.logicalKey);
     if (seekDirection != null) {
+      if (_confirmTimelineSeeks) {
+        if (event.isActionable) {
+          _requestTimelineStep(forward: seekDirection == MediaSeekDirection.forward, isRepeat: event is KeyRepeatEvent);
+        }
+        return KeyEventResult.handled;
+      }
       // Same chrome treatment every other key reaching here gets: a visible
       // OSD stays up for the press, a hidden one stays down (#1676).
       if (_showControls && event.isActionable) {

@@ -28,7 +28,8 @@ class DebouncedSeekAccumulator {
     this.onChanged,
     this.onBurstAbandoned,
     Stream<Duration?>? playheadJumps,
-    this.debounce = const Duration(milliseconds: 800),
+    this.debounce = defaultDebounce,
+    this.commitOnIdle = true,
     this.settlePoll = const Duration(seconds: 2),
     this.settleTolerance = const Duration(seconds: 3),
     this.settleCeiling = const Duration(seconds: 10),
@@ -42,6 +43,7 @@ class DebouncedSeekAccumulator {
   /// elsewhere always retires the pin — and a foreign jump landing inside it is
   /// indistinguishable from the pinned target anyway.
   static const Duration ownJumpTolerance = Duration(milliseconds: 250);
+  static const Duration defaultDebounce = Duration(milliseconds: 800);
 
   final Duration Function() currentPosition;
   final Duration Function() duration;
@@ -63,6 +65,10 @@ class DebouncedSeekAccumulator {
   final void Function()? onBurstAbandoned;
 
   final Duration debounce;
+
+  /// Automatic bursts commit on idle; confirmation previews expire instead.
+  /// In both modes [flush] explicitly commits and [cancel] abandons the target.
+  final bool commitOnIdle;
   final Duration settlePoll;
   final Duration settleTolerance;
   final Duration settleCeiling;
@@ -76,6 +82,7 @@ class DebouncedSeekAccumulator {
   bool _disposed = false;
 
   Duration? get pendingPosition => _pendingPosition;
+  bool get hasUncommittedSeek => _pendingPosition != null && _pendingPosition != _lastFlushedPosition;
 
   /// Retire a committed preview when a decoded frame confirms its landing.
   /// A frame from an earlier seek must not discard a newer uncommitted burst.
@@ -166,7 +173,7 @@ class DebouncedSeekAccumulator {
     }
 
     _debounceTimer?.cancel();
-    _debounceTimer = Timer(debounce, flush);
+    _debounceTimer = Timer(debounce, commitOnIdle ? flush : cancel);
     return Duration(milliseconds: targetMs - originMs);
   }
 

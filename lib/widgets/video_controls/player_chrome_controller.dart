@@ -34,6 +34,7 @@ class PlayerChromeController extends ChangeNotifier implements ValueListenable<b
   bool get value => _controlsVisible;
 
   bool get controlsVisible => _controlsVisible;
+  Duration get hideDelay => _hideDelay;
 
   /// Whether controls may still be visibly rendered during their fade-out.
   bool get controlsPresented => _controlsPresented;

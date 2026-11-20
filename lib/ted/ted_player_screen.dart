@@ -14,6 +14,7 @@ import '../services/video_volume_controller.dart';
 import '../services/video_filter_manager.dart';
 import '../services/scoped_player_prefs.dart';
 import '../widgets/video_controls/video_controls.dart';
+import '../widgets/video_controls/desktop_video_controls.dart';
 import '../widgets/video_controls/player_chrome_controller.dart';
 import '../widgets/video_controls/widgets/player_toast_indicator.dart';
 import '../widgets/overlay_sheet.dart';
@@ -66,15 +67,22 @@ class TeddyPlayer extends StatefulWidget {
 
 class _TeddyPlayerState extends State<TeddyPlayer> {
   final _routeFocus = FocusNode(debugLabel: 'TeddyPlayerRoute', canRequestFocus: false);
+  final _controls = GlobalKey<DesktopVideoControlsState>();
   OverlaySheetController? _sheet;
 
   KeyEventResult _handleBackKey(KeyEvent event) => handleBackKeyAction(event, () {
     if (_sheet?.isOpen ?? false) {
       _sheet!.pop();
-    } else {
+    } else if (_controls.currentState?.cancelSeekPreview() != true) {
       unawaited(_exit());
     }
   });
+
+  void _systemBack() {
+    if (PlatformDetector.isTV() && BackKeyCoordinator.consumeIfHandled()) return;
+    if (_controls.currentState?.cancelSeekPreview() == true) return;
+    unawaited(_exit());
+  }
 
   bool _backWithoutFocus(KeyEvent event) {
     if (!mounted || ModalRoute.of(context)?.isCurrent != true || !event.logicalKey.isBackKey) return false;
@@ -383,7 +391,7 @@ class _TeddyPlayerState extends State<TeddyPlayer> {
         onKeyEvent: (_, event) => _handleBackKey(event),
         child: OverlaySheetHost(
           canPop: _canExit,
-          onSystemBack: () => unawaited(_exit()),
+          onSystemBack: _systemBack,
           onOpenChanged: (open) {
             if (open) {
               _chrome.hold(PlayerChromeHold.promptInteraction);
@@ -419,6 +427,7 @@ class _TeddyPlayerState extends State<TeddyPlayer> {
                               position: _playback.timelinePosition,
                               duration: _playback.durationMs > 0 ? Duration(milliseconds: _playback.durationMs) : null,
                               child: PlexVideoControls(
+                                desktopControlsKey: _controls,
                                 player: player,
                                 volumeController: _volume!,
                                 metadata: metadata,

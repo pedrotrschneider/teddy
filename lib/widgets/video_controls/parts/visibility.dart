@@ -117,6 +117,19 @@ extension _PlexVideoControlsVisibilityMethods on _PlexVideoControlsState {
     });
   }
 
+  bool get _confirmTimelineSeeks =>
+      widget.metadata.backend == MediaBackend.ted && PlatformDetector.isTV() && !widget.isLive;
+
+  void _requestTimelineStep({required bool forward, bool isRepeat = false}) {
+    if (!widget.canControl) return;
+    InputModeTracker.reportNonPointerInput();
+    widget.chromeController.show();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_showControls || _sheetIsOpen() || ModalRoute.of(context)?.isCurrent != true) return;
+      _desktopControlsKey.currentState?.requestTimelineStep(forward: forward, isRepeat: isRepeat);
+    });
+  }
+
   /// Holds the chrome while any pointer is pressed on the controls, so a held
   /// slider, scrub or button can't fade out and unmount under the pointer.
   Widget _holdChromeWhilePressed({required Widget child}) => Listener(

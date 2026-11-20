@@ -5,6 +5,59 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:plezy/media/stepped_seek.dart';
 
 void main() {
+  test('confirmation preview expires on idle without seeking and each step renews its lifetime', () {
+    fakeAsync((async) {
+      final seeks = <Duration>[];
+      final accumulator = DebouncedSeekAccumulator(
+        currentPosition: () => const Duration(seconds: 20),
+        duration: () => const Duration(minutes: 2),
+        seek: seeks.add,
+        commitOnIdle: false,
+        debounce: const Duration(seconds: 5),
+      );
+      accumulator.seekBy(const Duration(seconds: 10));
+      async.elapse(const Duration(seconds: 4));
+      expect(accumulator.hasUncommittedSeek, true);
+      accumulator.seekBy(const Duration(seconds: 10));
+      async.elapse(const Duration(seconds: 4));
+      expect(accumulator.pendingPosition, const Duration(seconds: 40));
+      async.elapse(const Duration(seconds: 1));
+      expect(accumulator.pendingPosition, isNull);
+      expect(accumulator.hasUncommittedSeek, false);
+      accumulator.flush();
+      expect(seeks, isEmpty);
+      accumulator.dispose();
+    });
+  });
+
+  test('confirmation commits once and a decoded frame cannot retire a newer preview', () {
+    fakeAsync((async) {
+      final seeks = <Duration>[];
+      final accumulator = DebouncedSeekAccumulator(
+        currentPosition: () => const Duration(seconds: 20),
+        duration: () => const Duration(minutes: 2),
+        seek: seeks.add,
+        commitOnIdle: false,
+        debounce: const Duration(seconds: 5),
+      );
+      accumulator.seekBy(const Duration(seconds: 10));
+      accumulator.observeDecodedLanding(const Duration(seconds: 30));
+      expect(accumulator.hasUncommittedSeek, true);
+      accumulator.flush();
+      accumulator.flush();
+      expect(accumulator.hasUncommittedSeek, false);
+      expect(seeks, [const Duration(seconds: 30)]);
+      accumulator.seekBy(const Duration(seconds: 10));
+      accumulator.observeDecodedLanding(const Duration(seconds: 30));
+      expect(accumulator.pendingPosition, const Duration(seconds: 40));
+      expect(accumulator.hasUncommittedSeek, true);
+      async.elapse(const Duration(seconds: 5));
+      expect(accumulator.pendingPosition, isNull);
+      expect(seeks, [const Duration(seconds: 30)]);
+      accumulator.dispose();
+    });
+  });
+
   test('confirmed frame landing retires the committed pin and rebases the next burst immediately', () {
     fakeAsync((async) {
       var decoded = const Duration(seconds: 20);

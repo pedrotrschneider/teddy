@@ -6,6 +6,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:flutter/services.dart';
 
 import '../../focus/dpad_navigator.dart';
+import '../../focus/key_event_utils.dart';
 import '../../media/media_item.dart';
 import '../../media/media_backend.dart';
 import 'player_control_scope.dart';
@@ -175,6 +176,7 @@ class DesktopVideoControlsState extends State<DesktopVideoControls> {
   TrackControlsState get _trackControlsState => widget.trackControlsState;
   bool get _canControl => _trackControlsState.canControl;
   bool get _isLive => _trackControlsState.isLive;
+  bool get _confirmTimelineSeek => widget.metadata.backend == MediaBackend.ted && PlatformDetector.isTV() && !_isLive;
 
   late final FocusNode _prevItemFocusNode;
   late final FocusNode _prevChapterFocusNode;
@@ -245,6 +247,10 @@ class DesktopVideoControlsState extends State<DesktopVideoControls> {
       duration: () => PlayerTimelinePosition.durationOf(context) ?? widget.player.state.duration,
       seek: widget.onSeekEnd,
       playheadJumps: widget.player.streams.playheadJump,
+      commitOnIdle: !_confirmTimelineSeek,
+      debounce: _confirmTimelineSeek
+          ? widget.chromeController?.hideDelay ?? const Duration(seconds: 5)
+          : DebouncedSeekAccumulator.defaultDebounce,
       onChanged: () {
         if (mounted) setState(() {});
       },
@@ -265,6 +271,15 @@ class DesktopVideoControlsState extends State<DesktopVideoControls> {
   /// Drop a coalesced timeline burst that will never be committed, because what
   /// it was seeking through is being replaced.
   void abandonPendingSeek() => _timelineSeek.cancel();
+
+  bool get hasSeekPreview => _confirmTimelineSeek && _timelineSeek.hasUncommittedSeek;
+
+  bool cancelSeekPreview() {
+    if (!hasSeekPreview) return false;
+    abandonPendingSeek();
+    _resetSeekState();
+    return true;
+  }
 
   void _bindChapterLabelStreams() {
     if (widget.chapters.isEmpty) {
@@ -316,6 +331,10 @@ class DesktopVideoControlsState extends State<DesktopVideoControls> {
   }
 
   void _onChromeControllerChanged() {
+    if (_confirmTimelineSeek && widget.chromeController?.controlsVisible == false) {
+      abandonPendingSeek();
+      _resetSeekState();
+    }
     if (widget.chromeController?.contentStripVisible == false) {
       hideContentStrip();
     }
@@ -331,6 +350,14 @@ class DesktopVideoControlsState extends State<DesktopVideoControls> {
   void requestTimelineFocus({KeyEvent? event}) {
     _timelineFocusNode.requestFocus();
     if (event != null) _handleTimelineKeyEvent(_timelineFocusNode, event);
+  }
+
+  /// TV transport buttons and hardware seek keys enter the same preview as
+  /// Left/Right, without issuing a native seek until Select confirms it.
+  void requestTimelineStep({required bool forward, bool isRepeat = false}) {
+    if (!_confirmTimelineSeek || !_canControl) return;
+    requestTimelineFocus();
+    _advanceTimeline(forward: forward, isRepeat: isRepeat);
   }
 
   void requestPlayPauseFocus() {
@@ -376,7 +403,12 @@ class DesktopVideoControlsState extends State<DesktopVideoControls> {
       widget.onFocusActivity?.call();
     } else {
       // Reset progressive seek state when timeline loses focus
-      _timelineSeek.flush();
+      if (_confirmTimelineSeek) {
+        // A transport button may have just armed a preview and moved here.
+        if (!_timelineFocusNode.hasFocus) abandonPendingSeek();
+      } else {
+        _timelineSeek.flush();
+      }
       _resetSeekState();
     }
   }
@@ -546,11 +578,19 @@ class DesktopVideoControlsState extends State<DesktopVideoControls> {
   KeyEventResult _handleTimelineKeyEvent(FocusNode _, KeyEvent event) {
     final key = event.logicalKey;
 
-    // Handle key release: commit the accumulated scrub target with a single
-    // seek (a no-op when nothing is pending) and reset progressive seek state.
+    if (_confirmTimelineSeek && key.isSelectKey) {
+      return handleOneShotSelect(event, () {
+        if (_canControl) _timelineSeek.flush();
+        _resetSeekState();
+        widget.onFocusActivity?.call();
+      });
+    }
+
+    // TV releases end acceleration, leaving confirmation to Select. Other
+    // players commit the accumulated target on release as before.
     if (event is KeyUpEvent) {
       if (key == LogicalKeyboardKey.arrowLeft || key == LogicalKeyboardKey.arrowRight) {
-        _timelineSeek.flush();
+        if (!_confirmTimelineSeek) _timelineSeek.flush();
         _resetSeekState();
         return KeyEventResult.handled;
       }
@@ -561,11 +601,13 @@ class DesktopVideoControlsState extends State<DesktopVideoControls> {
       return KeyEventResult.ignored;
     }
 
-    final duration = PlayerTimelinePosition.durationOf(context) ?? widget.player.state.duration;
-
     // UP arrow - hide controls and reset seek state
     if (key == LogicalKeyboardKey.arrowUp) {
-      _timelineSeek.flush();
+      if (_confirmTimelineSeek) {
+        abandonPendingSeek();
+      } else {
+        _timelineSeek.flush();
+      }
       _resetSeekState();
       widget.onHideControls?.call();
       return KeyEventResult.handled;
@@ -573,7 +615,11 @@ class DesktopVideoControlsState extends State<DesktopVideoControls> {
 
     // DOWN arrow - move focus to play/pause button and reset seek state
     if (key == LogicalKeyboardKey.arrowDown) {
-      _timelineSeek.flush();
+      if (_confirmTimelineSeek) {
+        abandonPendingSeek();
+      } else {
+        _timelineSeek.flush();
+      }
       _resetSeekState();
       _playPauseFocusNode.requestFocus();
       widget.onFocusActivity?.call();
@@ -582,57 +628,39 @@ class DesktopVideoControlsState extends State<DesktopVideoControls> {
 
     // LEFT/RIGHT for smooth scrubbing with progressive acceleration
     if (key == LogicalKeyboardKey.arrowLeft || key == LogicalKeyboardKey.arrowRight) {
-      // Ignore seeking if user cannot control
-      if (!_canControl) return KeyEventResult.handled;
-
-      // Track direction change - reset if direction changes
-      if (_seekDirection != key) {
-        _seekDirection = key;
-        _seekRepeatCount = 0;
-      }
-      if (event is KeyRepeatEvent) {
-        _seekRepeatCount++;
-        _triggerKeyRepeatThumbnail();
-      }
-
-      final isForward = key == LogicalKeyboardKey.arrowRight;
-      final effectiveMultiplier = event is KeyRepeatEvent ? steppedSeekMultiplier(_seekRepeatCount) : 1.0;
-
-      // Live TV: relative epoch-based seeking via the parent accumulator, which
-      // coalesces a rapid/held burst into one transcode re-open (#1253). The
-      // acceleration multiplier still grows the per-press step; the accumulator
-      // sums them.
-      if (_isLive && widget.onLiveSeekBy != null) {
-        final stepSeconds = (widget.seekTimeSmall * effectiveMultiplier).clamp(1, 300).round();
-        widget.onLiveSeekBy!(isForward ? stepSeconds : -stepSeconds);
-        widget.onFocusActivity?.call();
-        return KeyEventResult.handled;
-      }
-
-      if (duration.inMilliseconds <= 0) return KeyEventResult.handled;
-
-      final baseStepMs = widget.seekTimeSmall * 1000;
-      final stepMs = (baseStepMs * effectiveMultiplier).clamp(500, 120_000).toInt();
-      final step = Duration(milliseconds: stepMs);
-
-      final before =
-          _timelineSeek.pendingPosition ?? PlayerTimelinePosition.of(context) ?? widget.player.state.position;
-      _timelineSeek.seekBy(isForward ? step : -step);
-      final after = _timelineSeek.pendingPosition ?? before;
-      widget.onTimelineSeekFeedback?.call((after - before).inSeconds);
-
-      // Move only the preview while the key is held; commit a single seek once
-      // the burst pauses (debounce) or the key is released. Firing a real seek
-      // per key-repeat floods a direct/progressive stream with overlapping range
-      // requests and wedges low-power devices (e.g. Fire TV Stick) in BUFFERING.
-      // The player's `buffering` flag lags the key-repeat rate, so it can't gate
-      // this reliably — coalescing unconditionally matches the existing transcode
-      // path and cannot flood regardless of hardware.
-      widget.onFocusActivity?.call();
+      _advanceTimeline(forward: key == LogicalKeyboardKey.arrowRight, isRepeat: event is KeyRepeatEvent);
       return KeyEventResult.handled;
     }
 
     return KeyEventResult.ignored;
+  }
+
+  void _advanceTimeline({required bool forward, required bool isRepeat}) {
+    if (!_canControl) return;
+    final key = forward ? LogicalKeyboardKey.arrowRight : LogicalKeyboardKey.arrowLeft;
+    if (_seekDirection != key || !isRepeat) {
+      _seekDirection = key;
+      _seekRepeatCount = 0;
+    }
+    if (isRepeat) {
+      _seekRepeatCount++;
+      if (!_confirmTimelineSeek) _triggerKeyRepeatThumbnail();
+    }
+    final multiplier = isRepeat ? steppedSeekMultiplier(_seekRepeatCount) : 1.0;
+    if (_isLive && widget.onLiveSeekBy != null) {
+      final seconds = (widget.seekTimeSmall * multiplier).clamp(1, 300).round();
+      widget.onLiveSeekBy!(forward ? seconds : -seconds);
+    } else {
+      final duration = PlayerTimelinePosition.durationOf(context) ?? widget.player.state.duration;
+      if (duration <= Duration.zero) return;
+      final step = Duration(milliseconds: (widget.seekTimeSmall * 1000 * multiplier).clamp(500, 120_000).toInt());
+      final before =
+          _timelineSeek.pendingPosition ?? PlayerTimelinePosition.of(context) ?? widget.player.state.position;
+      _timelineSeek.seekBy(forward ? step : -step);
+      final after = _timelineSeek.pendingPosition ?? before;
+      widget.onTimelineSeekFeedback?.call((after - before).inSeconds);
+    }
+    widget.onFocusActivity?.call();
   }
 
   @override

@@ -33,6 +33,10 @@ extension _PlexVideoControlsPlaybackInputMethods on _PlexVideoControlsState {
   void _seekToNextChapter() => unawaited(_seekToChapter(forward: true));
 
   Future<void> _seekByTime({required bool forward}) async {
+    if (_confirmTimelineSeeks) {
+      _requestTimelineStep(forward: forward);
+      return;
+    }
     final delta = Duration(seconds: forward ? _seekTimeSmall : -_seekTimeSmall);
     await _seekByOffset(delta);
   }

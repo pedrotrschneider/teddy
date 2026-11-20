@@ -377,6 +377,142 @@ void main() {
     });
   });
 
+  testWidgets('TV timeline previews taps and held steps without seeking until Enter', (tester) async {
+    (await TvDetectionService.getInstance()).setForceTv(true);
+    addTearDown(TvDetectionService.debugReset);
+    final f = ControlFixture();
+    await playerTest(tester, f, () async {
+      await mount(tester, f);
+      var slider = tester.widget<TimelineSlider>(find.byType(TimelineSlider));
+      slider.focusNode!.requestFocus();
+      await tester.pump();
+      final reports = f.reports.length;
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.arrowRight);
+      await tester.sendKeyRepeatEvent(LogicalKeyboardKey.arrowRight);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pump(const Duration(seconds: 1));
+      slider = tester.widget<TimelineSlider>(find.byType(TimelineSlider));
+      expect(slider.position, const Duration(seconds: 52));
+      expect(f.player.decodedPosition, const Duration(seconds: 17));
+      Iterable<MethodCall> seeks() =>
+          f.calls.where((c) => c.method == 'command' && (c.arguments as Map)['args'][0] == 'seek');
+      expect(seeks(), isEmpty);
+      expect(f.reports.length, reports);
+      expect(find.byType(TedPlayerLoading), findsNothing);
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyRepeatEvent(LogicalKeyboardKey.enter);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.enter);
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(seeks(), hasLength(1));
+      expect((seeks().single.arguments as Map)['args'], ['seek', '52.0', 'absolute']);
+      expect(find.byType(TedPlayerLoading), findsOneWidget);
+      f.player.handlePlayerEvent('playback-restart', {'positionSeconds': 52.0});
+      await settlePlayer(tester);
+      expect(find.byType(TedPlayerLoading), findsNothing);
+    });
+  });
+
+  for (final cancellation in ['hide', 'timeout', 'paused timeout', 'focus', 'remote Back', 'system Back']) {
+    testWidgets('TV seek preview cancels on $cancellation without changing playback', (tester) async {
+      (await TvDetectionService.getInstance()).setForceTv(true);
+      addTearDown(TvDetectionService.debugReset);
+      final f = ControlFixture();
+      await playerTest(tester, f, () async {
+        await mount(tester, f);
+        final controls = tester.widget<PlexVideoControls>(find.byType(PlexVideoControls));
+        if (cancellation == 'paused timeout') {
+          await controls.onPlayPauseRequested!(TransportCommand.pause);
+          await settlePlayer(tester);
+        }
+        var slider = tester.widget<TimelineSlider>(find.byType(TimelineSlider));
+        slider.focusNode!.requestFocus();
+        await tester.pump();
+        await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+        await tester.pump();
+        expect(tester.widget<TimelineSlider>(find.byType(TimelineSlider)).position, const Duration(seconds: 27));
+        if (cancellation == 'hide') {
+          controls.chromeController.hide();
+        } else if (cancellation.endsWith('timeout')) {
+          await tester.pump(const Duration(seconds: 5));
+        } else if (cancellation == 'focus') {
+          await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+        } else if (cancellation == 'remote Back') {
+          await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+        } else {
+          await tester.binding.handlePopRoute();
+        }
+        await settlePlayer(tester);
+        expect(find.byType(TeddyPlayer), findsOneWidget);
+        expect(f.calls.where((c) => c.method == 'command' && (c.arguments as Map)['args'][0] == 'seek'), isEmpty);
+        expect(f.player.decodedPosition, const Duration(seconds: 17));
+        expect(f.reports.where((report) => report['kind'] == 'stop' || report['kind'] == 'complete'), isEmpty);
+        controls.chromeController.show();
+        await settlePlayer(tester);
+        slider = tester.widget<TimelineSlider>(find.byType(TimelineSlider));
+        expect(slider.position, const Duration(seconds: 17));
+      });
+    });
+  }
+
+  testWidgets('Back owns a pending TV seek even if the preview expires before key release', (tester) async {
+    (await TvDetectionService.getInstance()).setForceTv(true);
+    addTearDown(TvDetectionService.debugReset);
+    final f = ControlFixture();
+    await playerTest(tester, f, () async {
+      await mount(tester, f);
+      final slider = tester.widget<TimelineSlider>(find.byType(TimelineSlider));
+      slider.focusNode!.requestFocus();
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
+      await tester.pump();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.escape);
+      await tester.pump(const Duration(seconds: 5));
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.escape);
+      await tester.binding.handlePopRoute();
+      await settlePlayer(tester);
+      expect(find.byType(TeddyPlayer), findsOneWidget);
+      expect(f.calls.where((c) => c.method == 'command' && (c.arguments as Map)['args'][0] == 'seek'), isEmpty);
+      expect(f.reports.where((report) => report['kind'] == 'stop' || report['kind'] == 'complete'), isEmpty);
+    });
+  });
+
+  for (final input in ['hardware seek', 'transport button']) {
+    testWidgets('TV $input previews on the timeline and waits for Enter', (tester) async {
+      (await TvDetectionService.getInstance()).setForceTv(true);
+      addTearDown(TvDetectionService.debugReset);
+      final f = ControlFixture();
+      await playerTest(tester, f, () async {
+        await mount(tester, f);
+        final controls = tester.widget<PlexVideoControls>(find.byType(PlexVideoControls));
+        if (input == 'hardware seek') {
+          controls.chromeController.hide();
+          await settlePlayer(tester);
+          await tester.sendKeyEvent(LogicalKeyboardKey.mediaFastForward);
+        } else {
+          final forward = find.byWidgetPredicate(
+            (w) => w is VideoControlButton && w.semanticLabel == t.videoControls.seekForwardButton(seconds: 10),
+          );
+          tester.widget<VideoControlButton>(forward).focusNode!.requestFocus();
+          await tester.pump();
+          await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        }
+        await settlePlayer(tester);
+        final slider = tester.widget<TimelineSlider>(find.byType(TimelineSlider));
+        expect(slider.focusNode!.hasPrimaryFocus, true);
+        expect(slider.position, const Duration(seconds: 27));
+        final seeks = f.calls.where((c) => c.method == 'command' && (c.arguments as Map)['args'][0] == 'seek');
+        expect(seeks, isEmpty);
+        await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(seeks, hasLength(1));
+        expect((seeks.single.arguments as Map)['args'], ['seek', '27.0', 'absolute']);
+        f.player.handlePlayerEvent('playback-restart', {'positionSeconds': 27.0});
+        await settlePlayer(tester);
+      });
+    });
+  }
+
   testWidgets('TV transport is larger and centered; held timeline seeks keep focus and Down selects Pause', (
     tester,
   ) async {
@@ -421,6 +557,10 @@ void main() {
       await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowRight);
       await tester.pump(const Duration(milliseconds: 300));
       expect(slider.focusNode!.hasPrimaryFocus, true);
+      expect(find.byType(TedPlayerLoading), findsNothing);
+      expect(f.calls.where((c) => c.method == 'command' && (c.arguments as Map)['args'][0] == 'seek'), isEmpty);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump(const Duration(milliseconds: 100));
       expect(find.byType(TedPlayerLoading), findsOneWidget);
       final lastSeek = f.calls.lastWhere((c) => c.method == 'command' && (c.arguments as Map)['args'][0] == 'seek');
       final target = double.parse((lastSeek.arguments as Map)['args'][1] as String);
@@ -485,7 +625,7 @@ void main() {
     });
   });
 
-  testWidgets('pointer reveals without changing focus; visible and hidden arrows focus the timeline and seek', (
+  testWidgets('pointer reveals without changing focus; visible and hidden arrows preview before Enter seeks', (
     tester,
   ) async {
     TvDetectionService.debugSetAppleTVOverride(true);
@@ -524,12 +664,18 @@ void main() {
       await tester.sendKeyUpEvent(LogicalKeyboardKey.arrowRight);
       await tester.pump(const Duration(milliseconds: 250));
       final seeks = f.calls.where((c) => c.method == 'command' && (c.arguments as Map)['args'][0] == 'seek');
+      expect(seeks, isEmpty);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump(const Duration(milliseconds: 100));
       expect((seeks.last.arguments as Map)['args'], ['seek', '27.0', 'absolute']);
       f.player.handlePropertyChange('time-pos', 27.0);
       f.player.handlePlayerEvent('playback-restart', null);
       await tester.pump();
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowLeft);
       await tester.pump(const Duration(milliseconds: 250));
+      expect(seeks, hasLength(1));
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump(const Duration(milliseconds: 100));
       expect((seeks.last.arguments as Map)['args'], ['seek', '17.0', 'absolute']);
       // A queued pre-seek frame and an unbuffered EOF must not navigate.
       f.player.handlePlayerEvent('playback-restart', {'positionSeconds': 99.0});
@@ -542,6 +688,9 @@ void main() {
       await tester.pump();
       await tester.sendKeyEvent(LogicalKeyboardKey.arrowRight);
       await tester.pump(const Duration(milliseconds: 250));
+      expect(seeks, hasLength(2));
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pump(const Duration(milliseconds: 100));
       expect((seeks.last.arguments as Map)['args'], ['seek', '26.9', 'absolute']);
       await mouse.removePointer();
     });

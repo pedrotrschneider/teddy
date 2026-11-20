@@ -1,7 +1,6 @@
 import 'dart:async' show StreamSubscription, Timer, unawaited;
 import 'dart:io' show Platform;
 
-
 import 'package:flutter/gestures.dart'
     show
         PointerCancelEvent,
@@ -620,6 +619,9 @@ class PlexVideoControls extends StatefulWidget {
   /// Shared controller for player chrome visibility, auto-hide, and layout state.
   final PlayerChromeController chromeController;
 
+  /// Lets the owning route cancel a TV seek preview on platform Back.
+  final GlobalKey<DesktopVideoControlsState>? desktopControlsKey;
+
   /// Optional shader service for MPV shader control
   final ShaderService? shaderService;
 
@@ -737,6 +739,7 @@ class PlexVideoControls extends StatefulWidget {
     this.playNextFocusNode,
     this.playbackPromptOpen = false,
     required this.chromeController,
+    this.desktopControlsKey,
     this.shaderService,
     this.onShaderChanged,
     this.thumbnailDataBuilder,
@@ -795,7 +798,7 @@ class _PlexVideoControlsState extends State<PlexVideoControls>
   int _trafficLightVisibilityGeneration = 0;
 
   // GlobalKey to access DesktopVideoControls state for focus management
-  final GlobalKey<DesktopVideoControlsState> _desktopControlsKey = GlobalKey<DesktopVideoControlsState>();
+  late final _desktopControlsKey = widget.desktopControlsKey ?? GlobalKey<DesktopVideoControlsState>();
 
   // Double-tap feedback state
   bool _showDoubleTapFeedback = false;
@@ -855,6 +858,7 @@ class _PlexVideoControlsState extends State<PlexVideoControls>
 
   /// Latched for the whole Back press; see [_handleLocalPlayerNavigationKeyEvent].
   bool _skipMarkerOwnsBackPress = false;
+  bool _seekPreviewOwnsBackPress = false;
   late List<MediaMarker> _markers = widget.initialMarkers ?? [];
   late bool _markersLoaded = widget.initialMarkers != null;
   // Playback state subscription for auto-hide timer
