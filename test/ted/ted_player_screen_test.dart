@@ -109,6 +109,9 @@ void main() {
     TedEpisodeTargets? targets,
     Future<void> Function(TedTitle)? onTransition,
     void Function(TedTitle)? onPrefetch,
+    Future<TedEpisodeTargets>? delayedTargets,
+    String? sourceType,
+    String? bingeKey,
   }) async {
     await f.auth.login('https://ted.example', 'fixture', '', 'Full controls fixture');
     final routes = TedFocusRoutes();
@@ -127,7 +130,7 @@ void main() {
                         client: TedClient(f.auth),
                         player: f.player,
                         title: 'Fixture video',
-                        episodeTargets: targets == null ? null : Future.value(targets),
+                        episodeTargets: delayedTargets ?? (targets == null ? null : Future.value(targets)),
                         onEpisodeTransition: onTransition,
                         onPrefetchNext: onPrefetch,
                         session: TedPlaybackSession(
@@ -138,9 +141,9 @@ void main() {
                           mediaPath,
                           100000,
                           0,
-                          source: onPrefetch == null ? 'mapped_rd' : 'addon',
+                          source: sourceType ?? (onPrefetch == null ? 'mapped_rd' : 'addon'),
                           addonId: onPrefetch == null ? '' : 'a' * 64,
-                          bingeKey: onPrefetch == null ? '' : 'b' * 64,
+                          bingeKey: bingeKey ?? (onPrefetch == null ? '' : 'b' * 64),
                         ),
                       ),
                     ),
@@ -880,6 +883,35 @@ void main() {
       expect(stops.map((e) => e['id']).toSet().length, 1);
     });
   });
+  for (final source in ['mapped_rd', 'addon']) {
+    testWidgets('halfway preparation supports $source without a binge group and late targets', (tester) async {
+      final f = ControlFixture();
+      final requested = <TedTitle>[];
+      final targets = Completer<TedEpisodeTargets>();
+      const next = TedTitle(TedMediaIdentity('episode', 'tt1234567:1:3'), 'Next', '', false, 0, 0, false);
+      await playerTest(tester, f, () async {
+        await mount(
+          tester,
+          f,
+          targets: const TedEpisodeTargets(),
+          delayedTargets: targets.future,
+          onPrefetch: requested.add,
+          sourceType: source,
+          bingeKey: '',
+        );
+        f.player.handlePropertyChange('time-pos', 60.0);
+        f.player.handlePlayerEvent('playback-restart', {'positionSeconds': 60.0});
+        await tester.pump();
+        expect(requested, isEmpty);
+        targets.complete(const TedEpisodeTargets(next: next));
+        await tester.pump();
+        expect(requested, [next]);
+        f.player.handlePropertyChange('time-pos', 70.0);
+        await tester.pump();
+        expect(requested, [next]);
+      });
+    });
+  }
   testWidgets('next episode prefetch triggers once at halfway and never before', (tester) async {
     final f = ControlFixture();
     final requested = <TedTitle>[];

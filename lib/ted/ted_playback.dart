@@ -1,9 +1,9 @@
 import 'dart:async';
-import 'dart:math';
 
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 import '../mpv/mpv.dart';
+import '../mpv/player/player_native.dart';
 import '../focus/transport_keys.dart';
 import '../services/settings_service.dart';
 import '../utils/app_logger.dart';
@@ -25,6 +25,7 @@ class TedPlayback extends ChangeNotifier {
   final bool offline;
   final List<SubtitleTrack> localSubtitles;
   final TedMediaTransport? mediaTransport;
+  final Future<void> Function(Player)? releasePlayer;
   final String? scope;
   final List<StreamSubscription<dynamic>> _subscriptions = [];
   final List<Map<String, dynamic>> _pending = [];
@@ -49,6 +50,11 @@ class TedPlayback extends ChangeNotifier {
   final Stopwatch _sinceAudioUnderrun = Stopwatch();
   bool _startupReported = false;
   bool _ready = false;
+  bool _nativeOpening = true, _queuedFileLoaded = false, _queuedRestart = false;
+  int? _expectedNativeSource, _observedNativeSource;
+  bool _nativeStarted = false;
+  int _pendingNativeDuration = 0;
+  int? _pendingDurationSource;
   bool _stopping = false;
   bool _completionObserved = false;
   bool _stopRecorded = false;
@@ -78,6 +84,7 @@ class TedPlayback extends ChangeNotifier {
   TedFailure? _syncFailure;
   TedFailure? get failure => _syncFailure ?? (_recovery == null ? _playerFailure : null);
   bool get ready => _ready;
+  bool get hasFirstFrame => _ready && _startupReported;
   bool get loading =>
       !_closed &&
       !_stopping &&
@@ -110,6 +117,7 @@ class TedPlayback extends ChangeNotifier {
     this.offline = false,
     this.localSubtitles = const [],
     this.mediaTransport,
+    this.releasePlayer,
   }) : server = client.auth.offlineServer ?? client.auth.server!,
        userId = client.auth.offlineUserId ?? client.auth.userId!,
        scope = tedOfflineScope(client.auth);
@@ -118,12 +126,38 @@ class TedPlayback extends ChangeNotifier {
     if (_closed || _stopping) return;
     _subscriptions.add(
       player.streams.duration.listen((duration) {
+        if (_stopping || _closed) return;
+        if (!_ready || _nativeOpening) {
+          if (_nativeStarted && duration > Duration.zero) {
+            _pendingNativeDuration = duration.inMilliseconds.clamp(0, 604800000);
+            _pendingDurationSource = _observedNativeSource;
+          }
+          return;
+        }
+        if (!_nativeMatches) return;
         if (_learnedDurationMs == 0 && duration.inMilliseconds > 0) {
           _learnedDurationMs = duration.inMilliseconds.clamp(0, 604800000);
         }
         _validateDuration();
         _reportStartWhenReady();
         if (!_closed) notifyListeners();
+      }),
+    );
+    _subscriptions.add(
+      player.streams.fileStarted.listen((_) {
+        if (_closed || _stopping) return;
+        _ready = false;
+        _queuedFileLoaded = false;
+        _queuedRestart = false;
+        _observedNativeSource = null;
+        _nativeStarted = true;
+        _pendingNativeDuration = 0;
+        _pendingDurationSource = null;
+      }),
+    );
+    _subscriptions.add(
+      player.streams.sourceStarted.listen((event) {
+        _observedNativeSource = event.sourceId;
       }),
     );
     _subscriptions.add(
@@ -142,21 +176,7 @@ class TedPlayback extends ChangeNotifier {
         notifyListeners();
       }),
     );
-    _subscriptions.add(
-      player.streams.fileLoaded.listen((_) {
-        if (_closed || _stopping) return;
-        if (!_ready) {
-          _ready = true;
-          _position = _openingPosition ?? Duration(milliseconds: session.resumeMs);
-          _confirmedPosition = _position;
-          _validateDuration();
-          _reportStartWhenReady();
-        }
-        _playerFailure = _durationRejected ? const TedFailure('source_placeholder') : null;
-        unawaited(_applyTracks());
-        notifyListeners();
-      }),
-    );
+    _subscriptions.add(player.streams.fileLoaded.listen((_) => _nativeFileLoaded()));
     _subscriptions.add(
       player.streams.completed.listen((completed) {
         _pendingEnd?.cancel();
@@ -182,38 +202,7 @@ class TedPlayback extends ChangeNotifier {
         if (!_closed) notifyListeners();
       }),
     );
-    _subscriptions.add(
-      player.streams.playbackRestart.listen((_) {
-        if (_closed || _stopping) return;
-        // A queued seek has not entered native code yet. An outgoing frame
-        // cannot confirm that request or release its EOF fence.
-        if (_pendingSeekRequests > 0 && _seekTarget == null && _openingPosition == null) return;
-        _reconnectsWithoutFrame = 0;
-        if (!_seekHasLanded()) return;
-        final landedSeek = _seekTarget != null;
-        if (!_startupReported && _startup.isRunning) {
-          _startupReported = true;
-          appLogger.i(
-            'TED player ready: session=${session.id} offline=$offline elapsed_ms=${_startup.elapsedMilliseconds}',
-          );
-          _startup.stop();
-        }
-        _seekTarget = null;
-        _openingPosition = null;
-        _landingWatchdog?.cancel();
-        _pendingEnd?.cancel();
-        _capturePosition(decodedLanding: true);
-        if (landedSeek) {
-          _diagnostic('seek_landed');
-          _record('progress');
-        }
-        _lastProgressPosition = _position;
-        _idleProgressTicks = 0;
-        if (_automaticRestarts > 0) _diagnostic('recovery_landed');
-        if (!_closed) notifyListeners();
-        if (player.state.completed) unawaited(_checkEnd(_playheadGeneration));
-      }),
-    );
+    _subscriptions.add(player.streams.playbackRestart.listen((_) => _nativeFrame()));
     _subscriptions.add(
       player.streams.tracks.listen((_) {
         if (!_closed && !_stopping) unawaited(_applyTracks());
@@ -303,10 +292,7 @@ class TedPlayback extends ChangeNotifier {
       }
       if (journal != null && scope != null) _languages = await journal!.trackLanguages(scope!, session.media);
       if (_originalLanguage.isEmpty && !offline) unawaited(_loadOriginalLanguage());
-      await _openAt(
-        Duration(milliseconds: max(0, session.resumeMs - settings.read(SettingsService.rewindOnResume) * 1000)),
-        play: true,
-      );
+      await _openAt(session.startPosition(rewindSeconds: settings.read(SettingsService.rewindOnResume)), play: true);
     } on TedFailure catch (error) {
       _playerFailure = error;
       _diagnostic('open_failed', code: error.code);
@@ -322,6 +308,12 @@ class TedPlayback extends ChangeNotifier {
 
   Future<void> _openAt(Duration position, {required bool play, bool seekRequested = false}) async {
     if (_closed || _stopping) return;
+    _nativeOpening = true;
+    _nativeStarted = false;
+    _pendingNativeDuration = 0;
+    _pendingDurationSource = null;
+    _queuedFileLoaded = false;
+    _queuedRestart = false;
     _seekTarget = seekRequested ? position : null;
     _openingPosition = position;
     _startup
@@ -340,15 +332,15 @@ class TedPlayback extends ChangeNotifier {
         throw const TedFailure('sign_in_required');
       }
       _trackSignature = null;
-      await player.open(
+      final source = await _replaceMedia(
         Media(session.mediaPath, start: position),
         play: play,
         externalSubtitles: localSubtitles,
-        timelineDuration: session.durationMs > 0 ? Duration(milliseconds: session.durationMs) : null,
       );
       _watchLanding();
       _position = position;
       await player.setRate(_rate);
+      _nativeOpened(source);
       return;
     }
     if (_closed || _stopping) return;
@@ -362,15 +354,98 @@ class TedPlayback extends ChangeNotifier {
       throw const TedFailure('sign_in_required');
     }
     _trackSignature = null;
-    await player.open(
+    final source = await _replaceMedia(
       Media(uri.toString(), headers: headers, start: position),
       play: play,
       externalSubtitles: sidecars,
-      timelineDuration: session.durationMs > 0 ? Duration(milliseconds: session.durationMs) : null,
     );
     _watchLanding();
     _position = position;
     await player.setRate(_rate);
+    _nativeOpened(source);
+  }
+
+  bool get _nativeMatches => _expectedNativeSource == null || _expectedNativeSource == _observedNativeSource;
+  Future<int?> _replaceMedia(Media media, {required bool play, required List<SubtitleTrack> externalSubtitles}) async {
+    final backend = player;
+    final duration = session.durationMs > 0 ? Duration(milliseconds: session.durationMs) : null;
+    if (backend is PlayerNative) {
+      return backend.open(media, play: play, externalSubtitles: externalSubtitles, timelineDuration: duration);
+    }
+    await backend.open(media, play: play, externalSubtitles: externalSubtitles, timelineDuration: duration);
+    return null;
+  }
+
+  void _nativeOpened(int? source) {
+    _expectedNativeSource = source;
+    _nativeOpening = false;
+    if (!_nativeMatches) return;
+    if (_queuedFileLoaded) _nativeFileLoaded();
+    if (_queuedRestart) _nativeFrame();
+  }
+
+  void _nativeFileLoaded() {
+    if (_closed || _stopping) return;
+    if (_nativeOpening) {
+      _queuedFileLoaded = true;
+      return;
+    }
+    if (!_nativeMatches) return;
+    _queuedFileLoaded = false;
+    if (!_ready) {
+      _ready = true;
+      if (_pendingNativeDuration > 0 &&
+          (_expectedNativeSource == null || _pendingDurationSource == _expectedNativeSource)) {
+        _learnedDurationMs = _pendingNativeDuration;
+      } else if (session.durationMs > 0) {
+        // A server-validated duration belongs to this session. The engine's
+        // snapshot can still contain an outgoing file's duration here.
+        _learnedDurationMs = session.durationMs;
+      }
+      _position = _openingPosition ?? Duration(milliseconds: session.resumeMs);
+      _confirmedPosition = _position;
+      _validateDuration();
+      _reportStartWhenReady();
+    }
+    _playerFailure = _durationRejected ? const TedFailure('source_placeholder') : null;
+    unawaited(_applyTracks());
+    notifyListeners();
+  }
+
+  void _nativeFrame() {
+    if (_closed || _stopping) return;
+    if (_nativeOpening) {
+      _queuedRestart = true;
+      return;
+    }
+    if (!_nativeMatches || !_ready) return;
+    _queuedRestart = false;
+    // A queued seek cannot be acknowledged by an outgoing frame.
+    if (_pendingSeekRequests > 0 && _seekTarget == null && _openingPosition == null) return;
+    _reconnectsWithoutFrame = 0;
+    if (!_seekHasLanded()) return;
+    final landedSeek = _seekTarget != null;
+    if (!_startupReported && _startup.isRunning) {
+      _startupReported = true;
+      appLogger.i(
+        'TED player ready: session=${session.id} offline=$offline elapsed_ms=${_startup.elapsedMilliseconds}',
+      );
+      _startup.stop();
+    }
+    _seekTarget = null;
+    _openingPosition = null;
+    _landingWatchdog?.cancel();
+    _pendingEnd?.cancel();
+    _capturePosition(decodedLanding: true);
+    if (landedSeek) {
+      _diagnostic('seek_landed');
+      _record('progress');
+    }
+    _lastProgressPosition = _position;
+    _idleProgressTicks = 0;
+    if (_automaticRestarts > 0) _diagnostic('recovery_landed');
+    if (!_closed) notifyListeners();
+    if (player.state.completed) unawaited(_checkEnd(_playheadGeneration));
   }
 
   bool _capturePosition({bool decodedLanding = false}) {
@@ -967,7 +1042,7 @@ class TedPlayback extends ChangeNotifier {
     }
     await _controls;
     _diagnostic('disposing_native');
-    await Future.wait([player.dispose(), ?_transportClosing]);
+    await Future.wait([releasePlayer == null ? player.dispose() : releasePlayer!(player), ?_transportClosing]);
     _diagnostic('disposed');
     timelinePosition.dispose();
     dispose();

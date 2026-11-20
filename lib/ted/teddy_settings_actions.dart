@@ -15,6 +15,7 @@ const teddySettings = <Pref<Object?>>[
   SettingsService.seekTimeLarge,
   SettingsService.rewindOnResume,
   SettingsService.teddyAutoPlayNextEpisode,
+  SettingsService.teddyNextEpisodeMatching,
   SettingsService.skipIntroMode,
   SettingsService.introPattern,
   SettingsService.skipCreditsMode,

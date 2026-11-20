@@ -3,7 +3,8 @@ import 'dart:convert';
 /// Safe, fixed messages: upstream responses, URLs and tokens never enter logs.
 class TedFailure implements Exception {
   final String code;
-  const TedFailure(this.code);
+  final Duration? retryAfter;
+  const TedFailure(this.code, {this.retryAfter});
   String get message => switch (code) {
     'sign_in_required' => 'Sign in to TED again.',
     'invalid_credentials' => 'TED rejected the username or password.',
@@ -211,6 +212,8 @@ class TedCredentials {
 }
 
 class TedPlaybackSession {
+  Duration startPosition({int rewindSeconds = 0}) =>
+      Duration(milliseconds: (resumeMs - rewindSeconds * 1000).clamp(0, resumeMs));
   final String id;
   final TedMediaIdentity media;
   final String mediaPath;

@@ -5,6 +5,10 @@ import 'ted/ted_secure_storage_recovery.dart';
 import 'ted/ted_source_cache.dart';
 import 'ted/ted_home_cache.dart';
 import 'ted/ted_next_preparation.dart';
+import 'ted/ted_next_device.dart';
+import 'ted/ted_next_cache.dart';
+import 'ted/ted_player_engine.dart';
+import 'mpv/mpv.dart';
 import 'ted/ted_preparing_player.dart';
 import 'dart:async';
 import 'dart:io';
@@ -42,7 +46,6 @@ import 'ted/ted_app_bar.dart';
 import 'ted/ted_app_shutdown.dart';
 import 'ted/ted_focus_recovery.dart';
 import 'ted/ted_episode_navigation.dart';
-import 'ted/ted_season_source.dart';
 import 'ted/teddy_ui_scale.dart';
 import 'ted/teddy_update_cleanup.dart';
 
@@ -240,11 +243,40 @@ class _TeddyHomeState extends State<TeddyHome> {
     homeCache: TedHomeCache(widget.store.db),
   );
   late TedDownloads _downloads = TedDownloads(_client, widget.store, widget.downloadRoot);
+  TedPlayerEnginePool _engines = TedPlayerEnginePool();
+  final _nextWork = <TedNextPreparation>{};
+  final _nextDevices = <TedNextDevicePreparation>{};
+  void _discardNextWork() {
+    for (final work in _nextWork) {
+      work.discard();
+    }
+    for (final device in _nextDevices) {
+      device.discard();
+    }
+    _nextWork.clear();
+    _nextDevices.clear();
+  }
+
+  Future<void> _cancelNextWork() async {
+    final work = _nextWork.toList();
+    _discardNextWork();
+    await Future.wait(work.map((work) => work.cancelEffects()));
+  }
+
+  void _discardNext(TedNextPreparation? work, TedNextDevicePreparation? device) {
+    work?.discard();
+    device?.discard();
+    _nextWork.remove(work);
+    _nextDevices.remove(device);
+  }
+
   Timer? _sync;
   Future<void>? _restoration;
   TedAppShutdown? _shutdown;
   Future<void> _stopServices() async {
     _sync?.cancel();
+    await _cancelNextWork();
+    await _engines.close();
     // Cancels network work without signing out or deleting saved credentials.
     _auth.close();
     await _restoration;
@@ -404,6 +436,8 @@ class _TeddyHomeState extends State<TeddyHome> {
 
   Future<void> _pauseProfile() async {
     Navigator.of(context, rootNavigator: true).popUntil((r) => r.isFirst);
+    await _cancelNextWork();
+    await _engines.close();
     final scope = tedOfflineScope(_auth);
     final rows = scope == null ? <Map<String, dynamic>>[] : await widget.store.downloads(scope);
     final running = rows.where((r) => r['status'] == 'downloading').map((r) => r['id']).toSet();
@@ -427,6 +461,9 @@ class _TeddyHomeState extends State<TeddyHome> {
   }
 
   void _newConnection([String? key]) {
+    _discardNextWork();
+    unawaited(_engines.close());
+    _engines = TedPlayerEnginePool();
     _auth.close();
     _downloads.dispose();
     _auth = TedAuth(store: _profiles.connection(key), deviceId: widget.deviceId);
@@ -584,30 +621,24 @@ class _TeddyHomeState extends State<TeddyHome> {
   }) async {
     if (_shutdown?.closing ?? false) return;
     var current = title;
-    TedSeasonSource? continuation;
+    var continuing = false;
+    TedNextPreparation? carried;
+    TedNextDevicePreparation? carriedDevice;
     while (mounted) {
       String? source = sourceId;
       try {
         final scope = tedOfflineScope(_auth);
-        final preference =
-            continuation ??
-            (!restoreSeasonSource || scope == null ? null : await widget.store.seasonSource(scope, current.media));
-        if (source == null && preference?.provider == 'stremio') {
+        final preference = continuing || !restoreSeasonSource || scope == null
+            ? null
+            : await widget.store.seasonSource(scope, current.media);
+        if (!continuing && source == null && preference?.provider == 'stremio') {
           final page = await _client.stremioSources(current.media);
-          source = continuation != null ? preference!.match(page) : page.preferredSource ?? preference!.match(page);
-          if (source == null && continuation != null) {
-            return;
-          }
+          source = page.preferredSource ?? preference!.match(page);
           if (!mounted) return;
           if (source == null && !current.ready) source = await chooseTedSource(context, page, client: _client);
           if (source == null && !current.ready) return;
         }
-        if (source == null && continuation?.provider == 'mapped') {
-          final page = await _client.mappedSource(current.media);
-          if (!page.mapped || !page.ready) {
-            return;
-          }
-        } else if (source == null && !current.ready) {
+        if (!continuing && source == null && !current.ready) {
           final page = await _client.sources(current.media);
           if (!mounted) return;
           if (page.mapped) {
@@ -617,37 +648,90 @@ class _TeddyHomeState extends State<TeddyHome> {
             if (source == null || !mounted) return;
           }
         }
-        if (continuation != null && _browseKey.currentState?.hasPlaybackEpisode(current.media) != true) return;
+        if (continuing && _browseKey.currentState?.hasPlaybackEpisode(current.media) != true) return;
         final preparationAbort = Completer<void>();
-        final sessionFuture = _client.createSelectedSession(
-          current.media,
-          sourceId: source,
-          fromBeginning: fromBeginning,
-          abortTrigger: preparationAbort.future,
-        );
+        final client = _client, engines = _engines;
+        final engineScope = tedOfflineScope(client.auth);
+        if (engineScope == null) throw const TedFailure('sign_in_required');
+        bool cancelled = false;
+        unawaited(preparationAbort.future.then((_) => cancelled = true));
+        Player? engine;
+        TedNextByteCache? cachedBytes;
+        final sessionFuture = client
+            .createSelectedSession(
+              current.media,
+              sourceId: source,
+              fromBeginning: fromBeginning,
+              abortTrigger: preparationAbort.future,
+            )
+            .then((session) async {
+              if (cancelled || !mounted || !identical(client, _client)) throw const TedFailure('sign_in_required');
+              final settings = prefs.SettingsService.instance;
+              engine = await engines.acquire(
+                engineScope,
+                exo: settings.read(prefs.SettingsService.useExoPlayer),
+                hardware: settings.read(prefs.SettingsService.enableHardwareDecoding),
+              );
+              if (cancelled || !mounted || !identical(client, _client)) {
+                await engines.release(engine!, retain: false);
+                throw const TedFailure('sign_in_required');
+              }
+              cachedBytes = carriedDevice?.take(session);
+              _discardNext(carried, carriedDevice);
+              carried = null;
+              carriedDevice = null;
+              return session;
+            });
         // Keep immediate authentication failures observed until the route's
         // FutureBuilder attaches, while still presenting that same error there.
         unawaited(sessionFuture.then<void>((_) {}, onError: (Object _, StackTrace _) {}));
         if (!mounted || (_shutdown?.closing ?? false)) return;
-        if (continuation != null && _browseKey.currentState?.hasPlaybackEpisode(current.media) != true) return;
+        if (continuing && _browseKey.currentState?.hasPlaybackEpisode(current.media) != true) return;
         final playingTitle = current;
         TedNextPreparation? nextPreparation;
+        TedNextDevicePreparation? nextDevice;
+        TedNextPreparation prepareNext(TedTitle target, TedPlaybackSession session) {
+          _discardNext(nextPreparation, nextDevice);
+          nextDevice = TedNextDevicePreparation(
+            client,
+            engines.cacheBudget,
+            onEvicted: () => nextPreparation?.retryDeviceCache(),
+          );
+          final device = nextDevice!;
+          nextPreparation = TedNextPreparation(
+            client,
+            target,
+            session,
+            strategy: prefs.SettingsService.instance.read(prefs.SettingsService.teddyNextEpisodeMatching),
+            origin: client.sourceChoice(source),
+            serverWarm: (work) => device.prepareServer(work.preparedSession!, work.aborted),
+            cache: (work) => device.preCache(work.aborted),
+          );
+          _nextWork.add(nextPreparation!);
+          _nextDevices.add(device);
+          return nextPreparation!;
+        }
+
         final result = await Navigator.of(context).push<TedPlayerExit>(
           MaterialPageRoute(
             builder: (_) => TedPreparingPlayer(
               session: sessionFuture,
               metadata: TedPresentation(_client).item(playingTitle),
               player: (session) => TeddyPlayer(
-                client: _client,
+                client: client,
                 session: session,
+                player: engine,
+                nextCache: cachedBytes,
+                releasePlayer: (player, retain) => engines.release(player, retain: retain),
                 onPrefetchNext: (target) {
-                  nextPreparation ??= TedNextPreparation(_client, target, session);
+                  if (!identical(client, _client)) return;
+                  if (nextPreparation?.target.media != target.media) prepareNext(target, session);
                 },
                 title: playingTitle.name,
                 metadata: TedPresentation(_client).item(playingTitle),
                 journal: widget.store,
                 episodeTargets: playingTitle.media.kind == 'episode'
-                    ? _client.adjacentEpisodes(playingTitle.media)
+                    ? client.adjacentEpisodes(playingTitle.media)
                     : null,
                 onEpisodeTransition: (target) async => _browseKey.currentState?.openPlaybackEpisode(target),
               ),
@@ -656,24 +740,32 @@ class _TeddyHomeState extends State<TeddyHome> {
         );
         if (!mounted || result == null || result.action == TedPlayerAction.back || result.target == null) {
           preparationAbort.complete();
-          nextPreparation?.discard();
+          _discardNext(nextPreparation, nextDevice);
           return;
         }
-        final preparedSource = nextPreparation?.target.media == result.target!.media
-            ? await nextPreparation?.source
-            : null;
-        if (!mounted || _browseKey.currentState?.hasPlaybackEpisode(result.target!.media) != true) {
-          nextPreparation?.discard();
-          return;
-        }
-        if (preparedSource == null) nextPreparation?.discard();
         final session = await sessionFuture;
-        continuation = TedSeasonSource.fromSession(session);
+        final work = nextPreparation?.target.media == result.target!.media
+            ? nextPreparation!
+            : prepareNext(result.target!, session);
+        await work.serverPrepared;
+        if (!mounted || _browseKey.currentState?.hasPlaybackEpisode(result.target!.media) != true) {
+          _discardNext(nextPreparation, nextDevice);
+          return;
+        }
+        if (!work.serverReady) {
+          _discardNext(nextPreparation, nextDevice);
+          return;
+        }
+        work.handoff();
+        carried = work;
+        carriedDevice = nextDevice;
+        continuing = true;
         current = result.target!;
-        sourceId = preparedSource;
+        sourceId = work.selected?.id;
         fromBeginning = false;
       } catch (_) {
-        if (continuation != null && mounted) {
+        _discardNext(carried, carriedDevice);
+        if (continuing && mounted) {
           return;
         }
         rethrow;
@@ -685,6 +777,8 @@ class _TeddyHomeState extends State<TeddyHome> {
   void dispose() {
     if (_shutdown?.stopServices == _stopServices) _shutdown?.stopServices = null;
     _sync?.cancel();
+    _discardNextWork();
+    unawaited(_engines.close());
     _auth.close();
     _profiles.removeListener(_storageChanged);
     _pictures.removeListener(_storageChanged);

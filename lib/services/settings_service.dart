@@ -36,6 +36,7 @@ import '../models/audio_quality_preset.dart';
 import '../models/transcode_quality_preset.dart';
 import '../navigation/navigation_tabs.dart';
 import '../models/teddy_section.dart';
+import '../models/next_episode_matching_strategy.dart';
 import '../utils/platform_detector.dart';
 import 'trackers/tracker_constants.dart';
 import '../profiles/profile.dart';
@@ -740,6 +741,11 @@ class SettingsService extends BaseSharedPreferencesService {
     transform: (v) => v.clamp(75, 300),
   );
   static const teddyAutoPlayNextEpisode = BoolPref('teddy_auto_play_next_episode');
+  static const teddyNextEpisodeMatching = EnumPref<NextEpisodeMatchingStrategy>(
+    'teddy_next_episode_matching',
+    values: NextEpisodeMatchingStrategy.values,
+    defaultValue: NextEpisodeMatchingStrategy.bingeGroup,
+  );
   static const EnumPref<TeddySection> teddyStartupSection = _TeddyStartupSectionPref();
   static final teddyDownloadChunkMiB = IntPref(
     'teddy_download_chunk_mib',
@@ -1434,6 +1440,7 @@ class SettingsService extends BaseSharedPreferencesService {
     resumeMusicOnLaunch,
     autoPlayNextEpisode,
     teddyAutoPlayNextEpisode,
+    teddyNextEpisodeMatching,
     teddyStartupSection,
     teddyDownloadChunkMiB,
     teddyMaxSimultaneousDownloads,

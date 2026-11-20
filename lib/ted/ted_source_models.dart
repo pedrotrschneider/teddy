@@ -3,6 +3,7 @@ import 'ted_models.dart';
 class TedSourceChoice {
   final String id, addon, name, description;
   final String addonId, bingeKey, sourceKey, favoriteKey;
+  final String packKey, fileName;
   final bool favorite;
   final bool rdDirectPlay, inRDAccount;
   final List<String> previousSourceKeys;
@@ -13,6 +14,8 @@ class TedSourceChoice {
     this.name,
     this.description, {
     this.addonId = '',
+    this.packKey = '',
+    this.fileName = '',
     this.bingeKey = '',
     this.sourceKey = '',
     this.favoriteKey = '',
@@ -28,6 +31,8 @@ class TedSourceChoice {
     name,
     description,
     addonId: addonId,
+    packKey: packKey,
+    fileName: fileName,
     bingeKey: bingeKey,
     sourceKey: sourceKey,
     favoriteKey: favoriteKey,
@@ -137,6 +142,8 @@ class TedSourcePage {
           value['name'] as String,
           value['description'] as String,
           addonId: value['addon_id'] as String? ?? '',
+          packKey: value['pack_key'] as String? ?? '',
+          fileName: value['file_name'] as String? ?? '',
           bingeKey: value['binge_key'] as String? ?? '',
           sourceKey: value['source_key'] as String? ?? '',
           favoriteKey: value['favorite_key'] as String? ?? '',
@@ -151,6 +158,10 @@ class TedSourcePage {
             choice.addon.length > 256 ||
             choice.description.length > 4096 ||
             !tedSourceKey(choice.addonId) ||
+            !tedSourceKey(choice.packKey) ||
+            choice.fileName.length > 4096 ||
+            choice.fileName.contains('/') ||
+            choice.fileName.contains(r'\') ||
             !tedSourceKey(choice.bingeKey) ||
             !tedSourceKey(choice.sourceKey) ||
             !tedSourceKey(choice.favoriteKey) ||

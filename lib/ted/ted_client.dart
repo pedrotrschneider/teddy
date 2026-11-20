@@ -7,10 +7,12 @@ import 'ted_source_cache.dart';
 import 'ted_home_cache.dart';
 import 'dart:async';
 import 'ted_preparation.dart';
+import 'ted_next_cache.dart';
 import 'ted_auth.dart';
 import 'ted_models.dart';
 import 'ted_episode_navigation.dart';
 import 'ted_source_models.dart';
+import 'ted_source_lookup.dart';
 import 'ted_metadata_models.dart';
 import 'ted_series_models.dart';
 import 'ted_download_watch.dart';
@@ -396,21 +398,37 @@ class TedClient {
   TedClient(this.auth, {this.sourceCache, this.homeCache});
   String get _sourceScope => jsonEncode([auth.server.toString(), auth.userId, auth.deviceId]);
   final _preparations = <String, TedPreparation>{};
-  final _sourceLookups = <String, Future<TedSourcePage>>{};
+  final _sourceLookups = <String, TedSourceLookup>{};
   final _preparedPages = <TedMediaIdentity, TedSourcePage>{};
+  final _sourceChoices = <String, TedSourceChoice>{};
+  TedSourceChoice? sourceChoice(String? id) => _sourceChoices[id];
+  TedSourcePage _rememberSources(TedSourcePage page) {
+    for (final choice in page.choices) {
+      _sourceChoices[choice.id] = choice;
+    }
+    while (_sourceChoices.length > 600) {
+      _sourceChoices.remove(_sourceChoices.keys.first);
+    }
+    return page;
+  }
+
   void stagePreparedSources(TedMediaIdentity media, TedSourcePage page) {
-    _preparedPages[media] = page;
+    _preparedPages[media] = _rememberSources(page);
   }
 
   TedSourcePage? takePreparedSources(TedMediaIdentity media) => _preparedPages.remove(media);
-  TedPreparation prepareSource(TedMediaIdentity media, String sourceId) {
-    return _preparations.putIfAbsent(sourceId, () => TedPreparation(auth, media, sourceId));
+  TedPreparation prepareSource(TedMediaIdentity media, String sourceId, {bool allowAdd = false}) {
+    final old = _preparations[sourceId];
+    if (old != null && (!old.reusable || allowAdd && !old.allowAdd)) _preparations.remove(sourceId);
+    return _preparations
+        .putIfAbsent(sourceId, () => TedPreparation(auth, media, sourceId, allowAdd: allowAdd))
+        .retain();
   }
 
   void discardPreparation(TedPreparation? preparation) {
     if (preparation == null) return;
+    if (!preparation.release()) return;
     if (identical(_preparations[preparation.sourceId], preparation)) _preparations.remove(preparation.sourceId);
-    preparation.discard();
   }
 
   Future<TedMetadataSnapshot> season(String id, int season) async {
@@ -653,6 +671,42 @@ class TedClient {
     return createSelectedSession(media, sourceId: sourceId);
   }
 
+  Future<TedPlaybackSession> createCacheSession(
+    TedMediaIdentity media, {
+    String? sourceId,
+    Future<void>? abortTrigger,
+  }) async {
+    if (!media.playable || !media.valid || sourceId != null && !tedUuid(sourceId)) {
+      throw const TedFailure('invalid_response');
+    }
+    return TedPlaybackSession.fromJson(
+      await auth.json(
+        'POST',
+        '/api/client/v1/playback/sessions',
+        body: {'media': media.toJson(), 'source_id': ?sourceId, 'prepare_only': true},
+        abortTrigger: abortTrigger,
+      ),
+      media,
+    );
+  }
+
+  Future<TedCachePlan> nextCachePlan(
+    TedPlaybackSession session, {
+    required int aheadBytes,
+    required int backBytes,
+    required int resumeMs,
+    Future<void>? abortTrigger,
+  }) async {
+    return TedCachePlan.fromJson(
+      await auth.json(
+        'POST',
+        '/api/client/v1/playback/sessions/${session.id}/cache-plan',
+        body: {'resume_ms': resumeMs, 'ahead_bytes': aheadBytes, 'back_bytes': backBytes},
+        abortTrigger: abortTrigger,
+      ),
+    );
+  }
+
   Future<TedPlaybackSession> createSelectedSession(
     TedMediaIdentity media, {
     String? sourceId,
@@ -667,7 +721,14 @@ class TedClient {
     unawaited(abortTrigger?.then((_) => cancelled = true));
     final server = auth.server, user = auth.userId;
     try {
-      if (preparation != null) await preparation.consume(abortTrigger: abortTrigger);
+      if (preparation != null) {
+        try {
+          await preparation.consume(abortTrigger: abortTrigger);
+        } catch (_) {
+          // A failed speculative request does not replace foreground recovery
+          // of this exact explicit source.
+        }
+      }
       for (var attempt = 0; ; attempt++) {
         if (cancelled || auth.server != server || auth.userId != user) throw const TedFailure('sign_in_required');
         try {
@@ -735,8 +796,12 @@ class TedClient {
     final scope = _sourceScope;
     final key = '$scope/${media.kind}/${media.id}';
     final existing = _sourceLookups[key];
-    if (existing != null) return existing;
-    final lookup = () async {
+    if (existing != null && existing.accepting) {
+      final page = await existing.join(abortTrigger);
+      if (_sourceScope == scope) _rememberSources(page);
+      return page;
+    }
+    final lookup = TedSourceLookup((abort) async {
       if (!forceRefresh && sourceCache != null && auth.signedIn) {
         final cached = await sourceCache!.read(scope, media);
         if (cached != null) return TedSourcePage.fromJson(cached, media);
@@ -745,7 +810,7 @@ class TedClient {
       final raw = await auth.json(
         'POST',
         '/api/client/v1/playback/sources',
-        abortTrigger: abortTrigger,
+        abortTrigger: abort,
         body: {
           'media': media.toJson(),
           'provider': 'stremio',
@@ -759,12 +824,19 @@ class TedClient {
       );
       if (_sourceScope == scope) await sourceCache?.write(scope, media, raw);
       return page;
-    }();
+    });
     _sourceLookups[key] = lookup;
+    void retire() {
+      if (identical(_sourceLookups[key], lookup)) _sourceLookups.remove(key);
+    }
+
+    unawaited(lookup.result.then<void>((_) => retire(), onError: (Object _) => retire()));
     try {
-      return await lookup;
+      final page = await lookup.join(abortTrigger);
+      if (_sourceScope == scope) _rememberSources(page);
+      return page;
     } finally {
-      if (identical(_sourceLookups[key], lookup)) unawaited(_sourceLookups.remove(key));
+      if (!lookup.accepting) retire();
     }
   }
 
@@ -779,18 +851,20 @@ class TedClient {
     Future<void>? abortTrigger,
   }) async {
     if (!media.playable || !media.valid) throw const TedFailure('invalid_response');
-    return TedSourcePage.fromJson(
-      await auth.json(
-        'POST',
-        '/api/client/v1/playback/sources',
-        abortTrigger: abortTrigger,
-        body: {
-          'media': media.toJson(),
-          'provider': provider,
-          if (preferredAddonId.isNotEmpty) 'preferred_addon': preferredAddonId,
-        },
+    return _rememberSources(
+      TedSourcePage.fromJson(
+        await auth.json(
+          'POST',
+          '/api/client/v1/playback/sources',
+          abortTrigger: abortTrigger,
+          body: {
+            'media': media.toJson(),
+            'provider': provider,
+            if (preferredAddonId.isNotEmpty) 'preferred_addon': preferredAddonId,
+          },
+        ),
+        media,
       ),
-      media,
     );
   }
 
@@ -798,13 +872,15 @@ class TedClient {
     if (!media.playable || !media.valid || previousSession != null && !tedUuid(previousSession)) {
       throw const TedFailure('invalid_response');
     }
-    return TedSourcePage.fromJson(
-      await auth.json(
-        'POST',
-        '/api/client/v1/playback/sources',
-        body: {'media': media.toJson(), 'previous_session': ?previousSession},
+    return _rememberSources(
+      TedSourcePage.fromJson(
+        await auth.json(
+          'POST',
+          '/api/client/v1/playback/sources',
+          body: {'media': media.toJson(), 'previous_session': ?previousSession},
+        ),
+        media,
       ),
-      media,
     );
   }
 
@@ -843,14 +919,14 @@ class TedClient {
           title.media.id.split(':').first != media.id.split(':').first) {
         throw const TedFailure('invalid_response');
       }
-      final a = media.id.split(':').skip(1).map(int.parse).toList();
-      final b = title.media.id.split(':').skip(1).map(int.parse).toList();
-      final comparison = b[0] == a[0] ? b[1].compareTo(a[1]) : b[0].compareTo(a[0]);
-      if (key == 'previous' ? comparison >= 0 : comparison <= 0) throw const TedFailure('invalid_response');
+      // TED's verified provider layout owns adjacency. Stable TED IDs can
+      // retain older numbering after a provider reorganization.
       return title;
     }
 
-    return TedEpisodeTargets(previous: read('previous'), next: read('next'));
+    final previous = read('previous'), next = read('next');
+    if (previous != null && next != null && previous.media == next.media) throw const TedFailure('invalid_response');
+    return TedEpisodeTargets(previous: previous, next: next);
   }
 
   Future<TedCatalogPage> browse(

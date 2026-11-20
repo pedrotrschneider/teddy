@@ -1,6 +1,7 @@
 import 'teddy_update_settings.dart';
 import 'ted_version.dart';
 import 'dart:async';
+import '../models/next_episode_matching_strategy.dart';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -368,6 +369,21 @@ class TeddySettingsScreenState extends State<TeddySettingsScreen> {
                 'Auto play next episode',
                 Icons.skip_next,
                 subtitle: 'At the end, continue using the same source when available.',
+              ),
+              SettingSelectionTile<NextEpisodeMatchingStrategy>(
+                pref: prefs.SettingsService.teddyNextEpisodeMatching,
+                icon: Icons.playlist_play,
+                title: 'Next Episode Matching Strategy',
+                subtitleBuilder: (value) => switch (value) {
+                  NextEpisodeMatchingStrategy.manual => 'Manual',
+                  NextEpisodeMatchingStrategy.bingeGroup => 'Binge Group',
+                  NextEpisodeMatchingStrategy.bestGuess => 'Best Guess',
+                },
+                options: const [
+                  DialogOption(value: NextEpisodeMatchingStrategy.manual, title: 'Manual'),
+                  DialogOption(value: NextEpisodeMatchingStrategy.bingeGroup, title: 'Binge Group'),
+                  DialogOption(value: NextEpisodeMatchingStrategy.bestGuess, title: 'Best Guess'),
+                ],
               ),
             ],
           ),

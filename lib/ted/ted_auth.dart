@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io' show HttpDate;
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -9,6 +10,18 @@ import 'ted_credential_store.dart';
 import 'ted_compatibility.dart';
 import 'ted_models.dart';
 import 'ted_version.dart';
+
+Duration? tedRetryAfter(String? value) {
+  if (value == null) return null;
+  final seconds = int.tryParse(value);
+  if (seconds != null) return seconds > 0 && seconds <= 31536000 ? Duration(seconds: seconds) : null;
+  try {
+    final delay = HttpDate.parse(value).difference(DateTime.now().toUtc());
+    return delay > Duration.zero ? delay : null;
+  } catch (_) {
+    return null;
+  }
+}
 
 /// Exactly one owner per connection. Native player/download adapters ask this
 /// owner for headers; they never load a family independently in another isolate.
@@ -294,6 +307,7 @@ class TedAuth {
         method == 'POST' &&
             (path == '/api/client/v1/playback/preparations' ||
                 path == '/api/client/v1/playback/sessions' ||
+                RegExp(r'^/api/client/v1/playback/sessions/[a-f0-9-]+/cache-plan$').hasMatch(path) ||
                 path == '/api/client/v1/downloads/resolve')
         ? playbackPreparationTimeout
         : method == 'POST' && path == '/api/client/v1/playback/sources'
@@ -406,7 +420,7 @@ class TedAuth {
         429 => 'rate_limited',
         _ => 'unavailable',
       },
-    });
+    }, retryAfter: tedRetryAfter(response.headers['retry-after']));
   }
 
   Future<void> _invalidateStored(TedCredentials value) async {

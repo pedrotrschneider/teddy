@@ -318,7 +318,7 @@ class TedMovieDetailState extends State<TedMovieDetail> {
       final page =
           (_stremio == null ? widget.client.takePreparedSources(_title.media) : null) ??
           await widget.client.stremioSources(_title.media, forceRefresh: forceRefresh || attempt > 0);
-      retry = page.lookupUnavailable && !page.cached;
+      retry = page.lookupUnavailable;
       if (mounted && generation == _generation) setState(() => _retainSource(page));
     } catch (error) {
       retry = error is TedFailure && ['unavailable', 'addon_unavailable'].contains(error.code);

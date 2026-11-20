@@ -22,6 +22,7 @@ import 'ted_client.dart';
 import 'ted_models.dart';
 import 'ted_playback.dart';
 import 'ted_media_transport.dart';
+import 'ted_next_cache.dart';
 import 'ted_presentation.dart';
 import 'ted_local_store.dart';
 import 'ted_app_shutdown.dart';
@@ -47,6 +48,8 @@ class TeddyPlayer extends StatefulWidget {
   final Future<TedEpisodeTargets>? episodeTargets;
   final Future<void> Function(TedTitle target)? onEpisodeTransition;
   final void Function(TedTitle target)? onPrefetchNext;
+  final Future<void> Function(Player player, bool retain)? releasePlayer;
+  final TedNextByteCache? nextCache;
   const TeddyPlayer({
     super.key,
     required this.client,
@@ -60,6 +63,8 @@ class TeddyPlayer extends StatefulWidget {
     this.episodeTargets,
     this.onEpisodeTransition,
     this.onPrefetchNext,
+    this.releasePlayer,
+    this.nextCache,
   });
   @override
   State<TeddyPlayer> createState() => _TeddyPlayerState();
@@ -92,6 +97,7 @@ class _TeddyPlayerState extends State<TeddyPlayer> {
   }
 
   TedAppShutdown? _shutdown;
+  bool _retainEngine = false;
   Future<void> _stopForExit() async {
     await _playback.stop();
     await _playback.closePlayer();
@@ -108,7 +114,10 @@ class _TeddyPlayerState extends State<TeddyPlayer> {
     journal: widget.journal,
     offline: widget.offline,
     localSubtitles: widget.localSubtitles,
-    mediaTransport: widget.offline ? null : TedPlaybackRelay(widget.client.auth, widget.session),
+    mediaTransport: widget.offline
+        ? null
+        : TedPlaybackRelay(widget.client.auth, widget.session, cache: widget.nextCache),
+    releasePlayer: widget.releasePlayer == null ? null : (player) => widget.releasePlayer!(player, _retainEngine),
   );
   TedEpisodeTargets _targets = const TedEpisodeTargets();
   bool _seasonRemembered = false;
@@ -136,7 +145,6 @@ class _TeddyPlayerState extends State<TeddyPlayer> {
           durationMs: _playback.durationMs,
         ),
       );
-  StreamSubscription<void>? _frameSubscription;
   int _chapterRevision = 0;
   String? _startupError;
   @override
@@ -145,15 +153,14 @@ class _TeddyPlayerState extends State<TeddyPlayer> {
     HardwareKeyboard.instance.addHandler(_backWithoutFocus);
     _playback.addListener(_changed);
     unawaited(WakelockPlus.enable().catchError((Object _) {}));
-    _frameSubscription = _playback.player.streams.playbackRestart.listen((_) {
-      _firstFrame.value = true;
-      if (mounted && _chapterRevision == 0) setState(() => _chapterRevision = 1);
-    });
     unawaited(_open());
     unawaited(
       widget.episodeTargets
           ?.then((targets) {
-            if (mounted) setState(() => _targets = targets);
+            if (mounted) {
+              _targets = targets;
+              _changed();
+            }
           })
           .catchError((Object _) {}),
     );
@@ -194,14 +201,17 @@ class _TeddyPlayerState extends State<TeddyPlayer> {
   }
 
   void _changed() {
+    _firstFrame.value = _playback.hasFirstFrame;
+    if (_playback.hasFirstFrame && _chapterRevision == 0) _chapterRevision = 1;
     if (!_nextPrefetched &&
         !_exiting &&
         !widget.offline &&
         _playback.ready &&
+        _playback.hasFirstFrame &&
+        (_playback.failure == null || _playback.failure?.code == 'sync_pending') &&
         _playback.durationMs > 0 &&
         _playback.positionMs >= _playback.durationMs ~/ 2 &&
-        widget.session.source == 'addon' &&
-        widget.session.bingeKey.isNotEmpty &&
+        widget.session.media.kind == 'episode' &&
         _targets.next != null) {
       _nextPrefetched = true;
       widget.onPrefetchNext?.call(_targets.next!);
@@ -239,6 +249,7 @@ class _TeddyPlayerState extends State<TeddyPlayer> {
           ? const TedEpisodeTargets()
           : await widget.episodeTargets?.catchError((Object _) => const TedEpisodeTargets()) ?? _targets;
       final target = action == TedPlayerAction.previous ? targets.previous : targets.next;
+      _retainEngine = action != TedPlayerAction.back && target != null;
       if (!mounted) return;
       if (action == TedPlayerAction.back &&
           prefs.SettingsService.instance.read(prefs.SettingsService.exitFullscreenOnPlayerClose) &&
@@ -366,7 +377,7 @@ class _TeddyPlayerState extends State<TeddyPlayer> {
     HardwareKeyboard.instance.removeHandler(_backWithoutFocus);
     _routeFocus.dispose();
     if (_shutdown?.stopPlayback == _stopForExit) _shutdown?.stopPlayback = null;
-    unawaited(_frameSubscription?.cancel());
+    widget.nextCache?.dispose();
     _volume?.dispose();
     _filters?.dispose();
     _chrome.dispose();
