@@ -17,8 +17,7 @@ class TedNextPreparation {
   final TedPlaybackSession current;
   final NextEpisodeMatchingStrategy strategy;
   final TedSourceChoice? origin;
-  final Future<void> Function(TedNextPreparation)? cache;
-  final Future<void> Function(TedNextPreparation)? serverWarm;
+  final Future<void> Function(TedPlaybackSession, Future<void>)? cache;
   final Duration retryDelay;
   final _abort = Completer<void>();
   final Uri? _server;
@@ -52,7 +51,6 @@ class TedNextPreparation {
     this.strategy = NextEpisodeMatchingStrategy.bingeGroup,
     this.origin,
     this.cache,
-    this.serverWarm,
     this.retryDelay = const Duration(minutes: 1),
   }) : _server = client.auth.server,
        _user = client.auth.userId,
@@ -186,21 +184,22 @@ class TedNextPreparation {
           _preparation ??= client.prepareSource(target.media, selected!.id, allowAdd: true);
           await _preparation!.retry();
         }
-        if (mapped || cache != null || serverWarm != null) {
+        if (mapped || cache != null) {
           preparedSession ??= await client.createCacheSession(
             target.media,
             sourceId: selected?.id,
             abortTrigger: aborted,
           );
         }
-        if (serverWarm != null) await serverWarm!(this);
         if (!active) return null;
+        // Mapping readiness / exact-source preparation authorizes continuation.
+        // Packet planning and byte retention are optional device optimizations.
         _warmed = true;
       }
       if (!_serverSignal.isCompleted) _serverSignal.complete();
       if (cache != null) {
         _phase(TedNextPhase.caching);
-        await cache!(this);
+        await cache!(preparedSession!, aborted);
       }
       if (!active) return null;
       _phase(TedNextPhase.ready);
@@ -219,25 +218,36 @@ class TedNextPreparation {
         'sign_in_required',
         'rd_credentials',
         'rd_not_configured',
-      }.contains(code)) {
-        _warmed = false;
-      }
-      final retryable = !const {
-        'sign_in_required',
         'incompatible',
         'incompatible_version',
-        'rd_credentials',
-        'rd_not_configured',
         'rd_infringing',
         'rd_rejected',
         'source_archive',
         'source_placeholder',
-        'source_selection_required',
         'stremio_not_linked',
         'stremio_credentials_rejected',
         'stremio_link_changed',
-        'source_unsupported',
-      }.contains(code);
+      }.contains(code)) {
+        _warmed = false;
+      }
+      final retryable =
+          _warmed ||
+          !const {
+            'sign_in_required',
+            'incompatible',
+            'incompatible_version',
+            'rd_credentials',
+            'rd_not_configured',
+            'rd_infringing',
+            'rd_rejected',
+            'source_archive',
+            'source_placeholder',
+            'source_selection_required',
+            'stremio_not_linked',
+            'stremio_credentials_rejected',
+            'stremio_link_changed',
+            'source_unsupported',
+          }.contains(code);
       _phase(retryable ? TedNextPhase.retrying : TedNextPhase.blocked, code);
       if (retryable) {
         _retry = Timer(_delay(error), () {

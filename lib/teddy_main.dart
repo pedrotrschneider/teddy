@@ -704,8 +704,7 @@ class _TeddyHomeState extends State<TeddyHome> {
             session,
             strategy: prefs.SettingsService.instance.read(prefs.SettingsService.teddyNextEpisodeMatching),
             origin: client.sourceChoice(source),
-            serverWarm: (work) => device.prepareServer(work.preparedSession!, work.aborted),
-            cache: (work) => device.preCache(work.aborted),
+            cache: device.preCache,
           );
           _nextWork.add(nextPreparation!);
           _nextDevices.add(device);

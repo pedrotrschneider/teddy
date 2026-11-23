@@ -238,7 +238,7 @@ void main() {
       client,
       const TedTitle(media, 'Episode', '', false, 0, 0, false),
       current,
-      cache: (_) async {
+      cache: (_, _) async {
         cache++;
         if (cache == 1) throw const TedFailure('unavailable');
       },
@@ -301,34 +301,19 @@ void main() {
       0,
       source: 'mapped_rd',
     );
-    var warm = 0;
-    final mapped = TedNextPreparation(
-      client,
-      const TedTitle(media, 'Episode', '', false, 0, 0, false),
-      current,
-      serverWarm: (_) async {
-        warm++;
-      },
-    );
+    final mapped = TedNextPreparation(client, const TedTitle(media, 'Episode', '', false, 0, 0, false), current);
     await mapped.serverPrepared;
     expect(mapped.serverReady, true);
     expect(mapped.mapped, true);
-    expect(warm, 1);
+    expect(client.cacheSessionRequests, 1);
     mapped.discard();
     client.sourceFailure = null;
     client.mapping = const TedSourcePage(false, false, [], [], null);
-    final unmapped = TedNextPreparation(
-      client,
-      const TedTitle(media, 'Episode', '', false, 0, 0, false),
-      current,
-      serverWarm: (_) async {
-        warm++;
-      },
-    );
+    final unmapped = TedNextPreparation(client, const TedTitle(media, 'Episode', '', false, 0, 0, false), current);
     await unmapped.serverPrepared;
     expect(unmapped.serverReady, false);
     expect(unmapped.phase, TedNextPhase.details);
-    expect(warm, 1);
+    expect(client.cacheSessionRequests, 1);
     expect(calls, isEmpty);
     expect(client.takePreparedSources(media)?.choices.single.id, id);
     unmapped.discard();
@@ -358,10 +343,9 @@ void main() {
         0,
         source: 'mapped_rd',
       ),
-      serverWarm: (_) async {},
-      cache: (work) async {
+      cache: (_, aborted) async {
         caching = true;
-        await Future.any([held.future, work.aborted]);
+        await Future.any([held.future, aborted]);
       },
     );
     await tester.pump();
@@ -417,7 +401,7 @@ void main() {
       client,
       const TedTitle(media, 'Episode', '', false, 0, 0, false),
       current,
-      cache: (_) async {
+      cache: (_, _) async {
         cache++;
         if (cache == 1) throw const TedFailure('rate_limited', retryAfter: Duration(seconds: 185));
       },
@@ -481,7 +465,7 @@ void main() {
       client,
       const TedTitle(media, 'Episode', '', false, 0, 0, false),
       current,
-      cache: (_) async {},
+      cache: (_, _) async {},
     );
     await tester.pump();
     expect(await work.source, isNull);

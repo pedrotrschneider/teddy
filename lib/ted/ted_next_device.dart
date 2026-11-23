@@ -10,41 +10,43 @@ class TedNextDevicePreparation {
   final TedClient client;
   final Future<(int, int)> Function() budget;
   final void Function()? onEvicted;
-  TedPlaybackSession? _session;
   TedPlaybackRelay? _relay;
   TedNextByteCache? _cache;
   bool _closed = false;
   TedNextDevicePreparation(this.client, this.budget, {this.onEvicted});
-  Future<void> prepareServer(TedPlaybackSession session, Future<void> aborted) async {
-    if (_closed) throw const TedFailure('unavailable');
-    _session ??= session;
+  Future<void> _prepareCache(TedPlaybackSession session, Future<void> aborted) async {
     if (_closed) throw const TedFailure('unavailable');
     final limits = await budget();
-    if (_cache != null && (_cache!.plan.aheadBytes > limits.$1 || _cache!.plan.backBytes > limits.$2)) {
+    final resume = session
+        .startPosition(rewindSeconds: SettingsService.instance.read(SettingsService.rewindOnResume))
+        .inMilliseconds;
+    if (_cache != null &&
+        (!_cache!.matches(session, resume) ||
+            _cache!.plan.aheadBytes > limits.$1 ||
+            _cache!.plan.backBytes > limits.$2)) {
       _cache!.dispose();
       _cache = null;
     }
     if (_cache == null) {
-      final resume = _session!
-          .startPosition(rewindSeconds: SettingsService.instance.read(SettingsService.rewindOnResume))
-          .inMilliseconds;
       final plan = await client.nextCachePlan(
-        _session!,
+        session,
         aheadBytes: limits.$1,
         backBytes: limits.$2,
         resumeMs: resume,
         abortTrigger: aborted,
       );
       if (_closed) throw const TedFailure('unavailable');
+      if (plan.resumeMs != resume || plan.aheadBytes != limits.$1 || plan.backBytes != limits.$2) {
+        throw const TedFailure('invalid_response');
+      }
       _cache = TedNextByteCache(session.media, plan, onEvicted: onEvicted);
     }
   }
 
-  Future<void> preCache(Future<void> aborted) async {
-    if (_session == null || _cache == null || _closed) throw const TedFailure('unavailable');
-    await prepareServer(_session!, aborted);
+  Future<void> preCache(TedPlaybackSession session, Future<void> aborted) async {
+    await _prepareCache(session, aborted);
     if (_cache!.suspended) throw const TedFailure('next_cache_evicted');
-    final relay = TedPlaybackRelay(client.auth, _session!, cache: _cache);
+    final relay = TedPlaybackRelay(client.auth, session, cache: _cache);
     _relay = relay;
     unawaited(aborted.then<void>((_) => relay.close()));
     try {
@@ -53,7 +55,6 @@ class TedNextDevicePreparation {
       if (failure.code == 'source_selection_required') {
         _cache!.dispose();
         _cache = null;
-        _session = null;
       }
       rethrow;
     } finally {
