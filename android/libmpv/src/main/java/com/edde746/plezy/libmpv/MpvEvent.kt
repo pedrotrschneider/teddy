@@ -2,8 +2,10 @@ package com.edde746.plezy.libmpv
 
 sealed interface MpvEvent {
   val sourceId: Long?
+  /** Monotonic time at the JNI callback, before main-thread flow delivery. */
+  val receivedAtMs: Long? get() = null
 
-  data class StartFile(override val sourceId: Long?) : MpvEvent
+  data class StartFile(override val sourceId: Long?, override val receivedAtMs: Long? = null) : MpvEvent
   data class EndFile(
     val reason: EndFileReason?,
     override val sourceId: Long?,
@@ -12,10 +14,13 @@ sealed interface MpvEvent {
     /** `mpv_error_string` for that code; null unless [reason] is [EndFileReason.Error]. */
     val errorMessage: String? = null
   ) : MpvEvent
-  data class FileLoaded(override val sourceId: Long?) : MpvEvent
+  data class FileLoaded(override val sourceId: Long?, override val receivedAtMs: Long? = null) : MpvEvent
+  data class VideoReconfig(override val sourceId: Long?, override val receivedAtMs: Long? = null) : MpvEvent
+  data class AudioReconfig(override val sourceId: Long?, override val receivedAtMs: Long? = null) : MpvEvent
   data class PlaybackRestart(
     override val sourceId: Long?,
-    val positionSeconds: Double?
+    val positionSeconds: Double?,
+    override val receivedAtMs: Long? = null
   ) : MpvEvent
 
   /**
@@ -36,11 +41,14 @@ sealed interface MpvEvent {
     internal fun fromId(
       id: Int,
       sourceId: Long?,
-      positionSeconds: Double?
+      positionSeconds: Double?,
+      receivedAtMs: Long? = null
     ): MpvEvent? = when (id) {
-      6 -> StartFile(sourceId)
-      8 -> FileLoaded(sourceId)
-      21 -> PlaybackRestart(sourceId, positionSeconds)
+      6 -> StartFile(sourceId, receivedAtMs)
+      8 -> FileLoaded(sourceId, receivedAtMs)
+      17 -> VideoReconfig(sourceId, receivedAtMs)
+      18 -> AudioReconfig(sourceId, receivedAtMs)
+      21 -> PlaybackRestart(sourceId, positionSeconds, receivedAtMs)
       else -> null
     }
   }

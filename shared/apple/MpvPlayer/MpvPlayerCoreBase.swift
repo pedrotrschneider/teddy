@@ -246,6 +246,11 @@ class MpvPlayerCoreBase: NSObject {
   /// runs serially on `queue`; pass this value into delegate dispatch rather
   /// than reading it later on the main queue.
   private var activeSourceId: Int64?
+  // Event-queue owned, bounded to the first restart of each playlist entry.
+  private var startupSourceId: Int64?
+  private var startupBeganAt: TimeInterval = 0
+  private var startupPhases: Set<String> = []
+  private var startupProfileComplete = true
   /// Delegate deliveries deferred behind a failed file's END_FILE until the
   /// drain that dequeued it runs dry or reaches `errorEndFileDrainLimit`; nil
   /// otherwise. See the END_FILE case of `handleEvent`. Accessed only on
@@ -1300,10 +1305,25 @@ class MpvPlayerCoreBase: NSObject {
   }
 
   private func postDelegateEvent(name: String, data: [String: Any]?) {
+    let postedAt = name == "startup-profile" ? ProcessInfo.processInfo.systemUptime : nil
     DispatchQueue.main.async { [weak self] in
       guard let self, self.isLifecycleActive else { return }
-      self.delegate?.onEvent(name: name, data: data)
+      var deliveredData = data
+      if let postedAt {
+        deliveredData?["deliveryMs"] = Int((ProcessInfo.processInfo.systemUptime - postedAt) * 1000)
+      }
+      self.delegate?.onEvent(name: name, data: deliveredData)
     }
+  }
+
+  private func profileStartup(_ phase: String) {
+    guard !startupProfileComplete, let sourceId = startupSourceId,
+      sourceId == activeSourceId, startupPhases.insert(phase).inserted else { return }
+    dispatchDelegateEvent(
+      name: "startup-profile",
+      data: ["phase": phase, "elapsedMs": Int((ProcessInfo.processInfo.systemUptime - startupBeganAt) * 1000)],
+      sourceId: sourceId
+    )
   }
 
   func dispatchDelegateProperty(name: String, value: Any?, sourceId: Int64?) {
@@ -1340,6 +1360,9 @@ class MpvPlayerCoreBase: NSObject {
       completeGetPropertyRequest(event)
 
     case MPV_EVENT_START_FILE:
+      startupBeganAt = ProcessInfo.processInfo.systemUptime
+      startupPhases.removeAll(keepingCapacity: true)
+      startupProfileComplete = false
       cacheLock.lock()
       cachedEstimatedFps = 0
       displayCriteriaHeld = true
@@ -1352,9 +1375,18 @@ class MpvPlayerCoreBase: NSObject {
         activeSourceId = nil
         dispatchDelegateEvent(name: "start-file", data: nil)
       }
+      startupSourceId = activeSourceId
+      profileStartup("start_file")
 
     case MPV_EVENT_FILE_LOADED:
+      profileStartup("file_loaded")
       dispatchDelegateEvent(name: "file-loaded", data: nil, sourceId: activeSourceId)
+
+    case MPV_EVENT_VIDEO_RECONFIG:
+      profileStartup("video_reconfig")
+
+    case MPV_EVENT_AUDIO_RECONFIG:
+      profileStartup("audio_reconfig")
 
     case MPV_EVENT_END_FILE:
       // Queued after the video chain is torn down but before this client can
@@ -1365,6 +1397,7 @@ class MpvPlayerCoreBase: NSObject {
       cacheLock.unlock()
       if let endFilePtr = event.data?.assumingMemoryBound(to: mpv_event_end_file.self) {
         let endFile = endFilePtr.pointee
+        if endFile.playlist_entry_id == startupSourceId { startupProfileComplete = true }
         var data: [String: Any] = ["reason": Int(endFile.reason.rawValue)]
         if endFile.reason == MPV_END_FILE_REASON_ERROR {
           data["error"] = Int(endFile.error)
@@ -1393,6 +1426,7 @@ class MpvPlayerCoreBase: NSObject {
           sourceId: endFile.playlist_entry_id
         )
       } else {
+        startupProfileComplete = true
         dispatchDelegateEvent(name: "end-file", data: nil)
       }
 
@@ -1400,6 +1434,7 @@ class MpvPlayerCoreBase: NSObject {
       MpvLog.debug("[MpvPlayerCore] MPV shutdown event")
 
     case MPV_EVENT_PLAYBACK_RESTART:
+      profileStartup("restart_received")
       // The first shown frame after a load or seek: the moment the presented
       // cadence is known (mpv decodes two frames before showing one).
       // `estimated-vf-fps` changes every frame, so it is read here instead
@@ -1437,6 +1472,8 @@ class MpvPlayerCoreBase: NSObject {
       if let position = readDoubleProperty("time-pos") {
         data = ["positionSeconds": position]
       }
+      profileStartup("restart_snapshot_done")
+      startupProfileComplete = true
       dispatchDelegateEvent(
         name: "playback-restart",
         data: data,

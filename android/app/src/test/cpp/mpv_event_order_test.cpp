@@ -338,7 +338,8 @@ void held_events_replay_the_values_they_were_dequeued_with() {
   const auto calls = run(script(
       start_file(7), end_file(MPV_END_FILE_REASON_ERROR, 7, MPV_ERROR_LOADING_FAILED), std::move(flag),
       std::move(count), std::move(duration), property("track-list", MPV_FORMAT_NONE), start_file(8),
-      hook("on_preloaded", 17), scripted(MPV_EVENT_FILE_LOADED), scripted(MPV_EVENT_PLAYBACK_RESTART),
+      hook("on_preloaded", 17), scripted(MPV_EVENT_FILE_LOADED), scripted(MPV_EVENT_VIDEO_RECONFIG),
+      scripted(MPV_EVENT_AUDIO_RECONFIG), scripted(MPV_EVENT_PLAYBACK_RESTART),
       end_file(MPV_END_FILE_REASON_EOF, 8), log_line("stream", MPV_LOG_LEVEL_ERROR, "Failed to open 7.")));
   require_calls(
       calls,
@@ -353,6 +354,8 @@ void held_events_replay_the_values_they_were_dequeued_with() {
           "event 6 entry=8",
           "hook on_preloaded id=17",
           "event 8 entry=8",
+          "event 17 entry=8",
+          "event 18 entry=8",
           "event 21 entry=8 position=12.5",
           "end-file reason=0 entry=8 error=0 message=<null>",
       },

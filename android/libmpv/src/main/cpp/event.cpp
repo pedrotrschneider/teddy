@@ -148,6 +148,8 @@ static void dispatchEvent(JNIEnv* env, jlong jsession, mpv_handle* mpv, const mp
       break;
     }
     case MPV_EVENT_FILE_LOADED:
+    case MPV_EVENT_VIDEO_RECONFIG:
+    case MPV_EVENT_AUDIO_RECONFIG:
       sendEventToJava(env, jsession, event->event_id, source.id, source.has);
       break;
     case MPV_EVENT_HOOK:
@@ -209,6 +211,8 @@ static void holdEvent(const mpv_event* event, std::vector<HeldEvent>& held) {
       break;
     }
     case MPV_EVENT_FILE_LOADED:
+    case MPV_EVENT_VIDEO_RECONFIG:
+    case MPV_EVENT_AUDIO_RECONFIG:
     case MPV_EVENT_PLAYBACK_RESTART:
       break;
     default:

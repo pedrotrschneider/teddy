@@ -42,6 +42,7 @@ import 'ted/ted_presentation.dart';
 import 'ted/ted_profiles.dart';
 import 'ted/ted_models.dart';
 import 'ted/ted_player_screen.dart';
+import 'ted/ted_player_route.dart';
 import 'ted/ted_app_bar.dart';
 import 'ted/ted_app_shutdown.dart';
 import 'ted/ted_focus_recovery.dart';
@@ -712,7 +713,11 @@ class _TeddyHomeState extends State<TeddyHome> {
         }
 
         final result = await Navigator.of(context).push<TedPlayerExit>(
-          MaterialPageRoute(
+          TedPlayerRoute(
+            isPrepared: (target) =>
+                engine?.playerType == 'mpv' &&
+                nextPreparation?.target.media == target.media &&
+                nextPreparation?.serverReady == true,
             builder: (_) => TedPreparingPlayer(
               session: sessionFuture,
               metadata: TedPresentation(_client).item(playingTitle),

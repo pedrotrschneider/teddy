@@ -59,6 +59,8 @@ abstract class PlayerBase with PlayerStreamControllersMixin implements Player {
   late final Future<void>? _nativeOwnershipReady;
   final Completer<void> _nativeRelease = Completer<void>();
   final _throttleSw = Stopwatch()..start();
+  final Set<String> _startupProfilePhases = {};
+  bool _startupProfileComplete = true;
   int _lastEmitMs = 0;
   int _lastCacheStateMs = 0;
   int _positionMs = 0;
@@ -581,6 +583,8 @@ abstract class PlayerBase with PlayerStreamControllersMixin implements Player {
     final sourceId = _finiteInt(data?['sourceId']);
     switch (name) {
       case 'start-file':
+        _startupProfilePhases.clear();
+        _startupProfileComplete = false;
         _deferringTrackList = false;
         _activeSourceId = sourceId;
         _activeSourceReadyEmitted = false;
@@ -598,6 +602,7 @@ abstract class PlayerBase with PlayerStreamControllersMixin implements Player {
 
       case 'end-file':
         if (sourceId != null && _activeSourceId != null && sourceId != _activeSourceId) break;
+        _startupProfileComplete = true;
         final loadAbandoned = _primaryMediaLoadStarted && !_primaryFileLoaded;
         _primaryMediaLoadStarted = false;
         setSeekable(false);
@@ -659,6 +664,7 @@ abstract class PlayerBase with PlayerStreamControllersMixin implements Player {
 
       case 'playback-restart':
         if (sourceId != null && sourceId != _activeSourceId) break;
+        _startupProfileComplete = true;
         // Property observers can arrive after this event. Read the native
         // frame snapshot on every restart, including later range seeks, before
         // announcing that decoding has resumed. A seek target is only intent.
@@ -681,6 +687,39 @@ abstract class PlayerBase with PlayerStreamControllersMixin implements Player {
             sourceReadyController.add(PlayerSourceReady(sourceId: sourceId, position: position));
           }
         }
+        break;
+
+      case 'startup-profile':
+        if (_startupProfileComplete || sourceId == null || sourceId != _activeSourceId) break;
+        final phase = data?['phase'];
+        if (!const {
+          'start_file',
+          'file_loaded',
+          'video_reconfig',
+          'audio_reconfig',
+          'restart_received',
+          'restart_snapshot_done',
+        }.contains(phase)) {
+          break;
+        }
+        final elapsed = _finiteInt(data?['elapsedMs']);
+        final delivery = _finiteInt(data?['deliveryMs']);
+        if (elapsed == null ||
+            elapsed < 0 ||
+            elapsed > 600000 ||
+            delivery == null ||
+            delivery < 0 ||
+            delivery > 600000 ||
+            !_startupProfilePhases.add(phase as String)) {
+          break;
+        }
+        logController.add(
+          PlayerLog(
+            level: PlayerLogLevel.info,
+            prefix: 'startup',
+            text: 'phase=$phase source=$sourceId native_elapsed_ms=$elapsed delivery_ms=$delivery',
+          ),
+        );
         break;
 
       case 'hdr-output-changed':

@@ -2,6 +2,7 @@ package com.edde746.plezy.libmpv
 
 import android.content.Context
 import android.os.Looper
+import android.os.SystemClock
 import android.view.Surface
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineScope
@@ -122,7 +123,8 @@ class MpvPlayer private constructor(
       val event = MpvEvent.fromId(
         eventId,
         sourceId.takeIf { hasSourceId },
-        positionSeconds.takeIf { hasPositionSeconds && it.isFinite() }
+        positionSeconds.takeIf { hasPositionSeconds && it.isFinite() },
+        SystemClock.elapsedRealtime()
       ) ?: return
       target(session)?.rawEvents?.trySend(event)
     }

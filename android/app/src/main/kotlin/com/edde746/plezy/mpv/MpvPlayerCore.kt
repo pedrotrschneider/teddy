@@ -427,6 +427,7 @@ class MpvPlayerCore private constructor(
   @Volatile private var player: MpvPlayer? = null
   private var scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
   private val endFileDiagnostics = MpvEndFileDiagnostics()
+  private val startupDiagnostics = MpvStartupDiagnostics()
 
   private val nativeFailure = AtomicReference<Exception?>()
   private val nativeOwnershipLock = Any()
@@ -1183,6 +1184,10 @@ class MpvPlayerCore private constructor(
   private fun collectEvents(p: MpvPlayer) {
     scope.launch(start = CoroutineStart.UNDISPATCHED) {
       p.eventFlow.collect { event ->
+        val startup = startupDiagnostics.onEvent(event, SystemClock.elapsedRealtime())
+        // START_FILE must establish Dart's source fence before its profile;
+        // the first restart's profile precedes its public ready event.
+        if (startup != null && event !is MpvEvent.StartFile) delegate?.onEvent("startup-profile", startup)
         when (event) {
           is MpvEvent.EndFile -> {
             delegate?.onEvent("end-file", endFileDiagnostics.onEndFile(event))
@@ -1212,7 +1217,9 @@ class MpvPlayerCore private constructor(
             )
           }
           is MpvEvent.LogMessage -> onMpvLog(event)
+          is MpvEvent.VideoReconfig, is MpvEvent.AudioReconfig -> Unit
         }
+        if (startup != null && event is MpvEvent.StartFile) delegate?.onEvent("startup-profile", startup)
       }
     }
   }

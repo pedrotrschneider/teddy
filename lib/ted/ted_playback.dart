@@ -47,6 +47,7 @@ class TedPlayback extends ChangeNotifier {
   int _idleProgressTicks = 0;
   bool _closed = false;
   final Stopwatch _startup = Stopwatch();
+  final Set<String> _startupPhases = {};
   final Stopwatch _sinceAudioUnderrun = Stopwatch();
   bool _startupReported = false;
   bool _ready = false;
@@ -320,6 +321,7 @@ class TedPlayback extends ChangeNotifier {
       ..reset()
       ..start();
     _startupReported = false;
+    _startupPhases.clear();
     _playheadGeneration++;
     _idleProgressTicks = 0;
     _pendingEnd?.cancel();
@@ -332,11 +334,13 @@ class TedPlayback extends ChangeNotifier {
         throw const TedFailure('sign_in_required');
       }
       _trackSignature = null;
+      _startupPhase('load_dispatch');
       final source = await _replaceMedia(
         Media(session.mediaPath, start: position),
         play: play,
         externalSubtitles: localSubtitles,
       );
+      _startupPhase('load_accepted', source: source);
       _watchLanding();
       _position = position;
       await player.setRate(_rate);
@@ -349,16 +353,19 @@ class TedPlayback extends ChangeNotifier {
     }
     final headers = await client.auth.headers();
     final uri = mediaTransport == null ? server.resolve(session.mediaPath) : await mediaTransport!.open();
+    _startupPhase('transport_ready');
     if (_closed || _stopping) return;
     if (client.auth.server != server || client.auth.userId != userId) {
       throw const TedFailure('sign_in_required');
     }
     _trackSignature = null;
+    _startupPhase('load_dispatch');
     final source = await _replaceMedia(
       Media(uri.toString(), headers: headers, start: position),
       play: play,
       externalSubtitles: sidecars,
     );
+    _startupPhase('load_accepted', source: source);
     _watchLanding();
     _position = position;
     await player.setRate(_rate);
@@ -377,6 +384,7 @@ class TedPlayback extends ChangeNotifier {
   }
 
   void _nativeOpened(int? source) {
+    _startupPhase('controls_ready', source: source);
     _expectedNativeSource = source;
     _nativeOpening = false;
     if (!_nativeMatches) return;
@@ -392,6 +400,7 @@ class TedPlayback extends ChangeNotifier {
     }
     if (!_nativeMatches) return;
     _queuedFileLoaded = false;
+    _startupPhase('file_loaded', source: _observedNativeSource);
     if (!_ready) {
       _ready = true;
       if (_pendingNativeDuration > 0 &&
@@ -419,6 +428,7 @@ class TedPlayback extends ChangeNotifier {
       return;
     }
     if (!_nativeMatches || !_ready) return;
+    _startupPhase('restart_received', source: _observedNativeSource);
     _queuedRestart = false;
     // A queued seek cannot be acknowledged by an outgoing frame.
     if (_pendingSeekRequests > 0 && _seekTarget == null && _openingPosition == null) return;
@@ -497,6 +507,16 @@ class TedPlayback extends ChangeNotifier {
     } else {
       appLogger.w(message);
     }
+  }
+
+  // Fixed call-site phases, once per open and only until the first landed
+  // frame. No native property queries or media/provider data in these logs.
+  void _startupPhase(String phase, {int? source}) {
+    if (!_startup.isRunning || _startupReported || _closed || _stopping || !_startupPhases.add(phase)) return;
+    appLogger.i(
+      'TED startup: phase=$phase session=${session.id} backend=${player.playerType} '
+      'elapsed_ms=${_startup.elapsedMilliseconds}${source == null ? "" : " source=$source"}',
+    );
   }
 
   void _handlePlayerError(PlayerError error) {
@@ -614,6 +634,7 @@ class TedPlayback extends ChangeNotifier {
   }
 
   Future<void> _applyTracks() async {
+    _startupPhase('tracks_queued');
     await _control(() async {
       await _applyCurrentTracks();
     });
@@ -625,6 +646,7 @@ class TedPlayback extends ChangeNotifier {
     final signature =
         '$_originalLanguage|${_languages.audio}|${_languages.subtitle}|${tracks.audio.map((t) => '${t.id}:${t.language}').join(',')}|${tracks.subtitle.map((t) => '${t.id}:${t.language}').join(',')}';
     if (_trackSignature == signature) return;
+    _startupPhase('tracks_begin');
     AudioTrack? audio;
     for (final candidate in [AudioTrack.auto, ...tracks.audio]) {
       if (candidate.id == _audioId) {
@@ -647,7 +669,9 @@ class TedPlayback extends ChangeNotifier {
       'language=${tedLanguage(subtitle.language)} codec=${_safeCodec(subtitle.codec)}',
     );
     await player.selectAudioTrack(audio);
+    _startupPhase('audio_selected');
     if (!_closed && !_stopping) await player.selectSubtitleTrack(subtitle);
+    _startupPhase('subtitles_selected');
     if (!_closed && !_stopping && player.supportsSecondarySubtitles && _secondarySubtitleId != null) {
       final secondary = [SubtitleTrack.off, ...tracks.subtitle].where((t) => t.id == _secondarySubtitleId).firstOrNull;
       if (secondary != null) await player.selectSecondarySubtitleTrack(secondary);

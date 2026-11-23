@@ -148,8 +148,8 @@ jobs:
       - name: Test release and navigation contracts
         if: matrix.platform == 'linux' && matrix.arch == 'x64'
         run: |
-          dart analyze lib test/ted
-          flutter test test/ted
+          dart analyze lib test/ted test/mpv/player_startup_profile_test.dart
+          flutter test test/ted test/mpv/player_startup_profile_test.dart
       - name: Configure Android release signing
         if: matrix.platform == 'android' && needs.version.outputs.publish == 'true'
         env:
