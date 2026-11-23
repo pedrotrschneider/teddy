@@ -6,6 +6,7 @@ import 'ted_models.dart';
 class TedCachePlan {
   final int size, resumeMs, durationMs, start, end, aheadBytes, backBytes;
   final String etag;
+  final List<(int, int)> initializationRanges;
   const TedCachePlan({
     required this.size,
     required this.etag,
@@ -15,9 +16,12 @@ class TedCachePlan {
     required this.end,
     required this.aheadBytes,
     required this.backBytes,
+    this.initializationRanges = const [],
   });
   factory TedCachePlan.fromJson(Map<String, dynamic> value) {
     try {
+      final initialization = value['initialization_ranges'] ?? const [];
+      if (initialization is! List || initialization.length > 64) throw const TedFailure('invalid_response');
       final plan = TedCachePlan(
         size: value['size'] as int,
         etag: value['etag'] as String,
@@ -27,6 +31,9 @@ class TedCachePlan {
         end: value['end'] as int,
         aheadBytes: value['ahead_bytes'] as int,
         backBytes: value['back_bytes'] as int,
+        initializationRanges: List.unmodifiable([
+          for (final range in initialization) ((range as Map)['start'] as int, range['end'] as int),
+        ]),
       );
       if (plan.size <= 0 ||
           plan.size > 32 << 40 ||
@@ -45,6 +52,9 @@ class TedCachePlan {
           plan.etag.length > 1024) {
         throw const TedFailure('invalid_response');
       }
+      if (plan.initializationRanges.any((r) => r.$1 < 0 || r.$2 < r.$1 || r.$2 >= plan.size)) {
+        throw const TedFailure('invalid_response');
+      }
       return plan;
     } catch (_) {
       throw const TedFailure('invalid_response');
@@ -56,14 +66,43 @@ class TedCachePlan {
   List<(int, int)> get ranges {
     final head = min(size, min(2 << 20, max(1, aheadBytes ~/ 4)));
     final tail = min(size - head, min(128 << 10, aheadBytes ~/ 16));
-    final overhead = min(head, start) + tail;
-    final forwardEnd = min(end, start + max(1, aheadBytes - overhead) - 1).toInt();
-    return [
-      (0, head - 1),
-      if (tail > 0) (size - tail, size - 1),
-      (start, forwardEnd),
-      if (resumeMs > 0 && start > 0 && backBytes > 0) (max(0, start - backBytes), start - 1),
-    ];
+    final result = <(int, int)>[];
+    final covered = <(int, int)>[];
+    int retain(int from, int through, int allowance) {
+      var cursor = from, left = allowance;
+      final added = <(int, int)>[];
+      void gap(int through) {
+        if (left == 0 || through < cursor) return;
+        final count = min(left, through - cursor + 1);
+        added.add((cursor, cursor + count - 1));
+        cursor += count;
+        left -= count;
+      }
+
+      for (final held in covered) {
+        if (left == 0 || cursor > through || held.$1 > through) break;
+        if (held.$2 < cursor) continue;
+        gap(min(through, held.$1 - 1));
+        if (left == 0) break;
+        cursor = max(cursor, held.$2 + 1);
+      }
+      gap(through);
+      result.addAll(added);
+      covered.addAll(added);
+      covered.sort((a, b) => a.$1.compareTo(b.$1));
+      return left;
+    }
+
+    var ahead = retain(0, head - 1, aheadBytes);
+    for (final range in initializationRanges) {
+      ahead = retain(range.$1, range.$2, ahead);
+    }
+    if (tail > 0) ahead = retain(size - tail, size - 1, ahead);
+    retain(start, end, ahead);
+    if (resumeMs > 0 && start > 0 && backBytes > 0) {
+      retain(max(0, start - backBytes), start - 1, backBytes);
+    }
+    return result;
   }
 }
 

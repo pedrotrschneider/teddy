@@ -99,7 +99,7 @@ void main() {
         cache.put(r.$1, List.filled(r.$2 - r.$1 + 1, 1));
       }
       expect(cache.bytes, lessThanOrEqualTo(96 << 10), reason: 'start=$start');
-      if (start == 0) expect(p.ranges.last.$1, 0);
+      if (start == 0) expect(cache.covers(0, (60 << 10) - 1), true);
     }
   });
   test('zero resume does not fill a backward window even when the first packet follows container metadata', () {
@@ -122,5 +122,75 @@ void main() {
       expect(cache.read(40 << 10, 41 << 10) != null, resume > 0);
       expect(cache.read(64 << 10, 65 << 10), isNotNull);
     }
+  });
+  test(
+    'measured container reads outside the fixed suffix are retained for native startup',
+    () => HttpOverrides.runWithHttpOverrides(() async {
+      final f = await RelayFixture.create();
+      addTearDown(f.close);
+      final p = TedCachePlan.fromJson({
+        'size': 256 << 10,
+        'etag': '"same-file"',
+        'resume_ms': 80000,
+        'duration_ms': 100000,
+        'start': 64 << 10,
+        'end': 128 << 10,
+        'ahead_bytes': 64 << 10,
+        'back_bytes': 32 << 10,
+        'initialization_ranges': [
+          {'start': 240 << 10, 'end': (256 << 10) - 1},
+        ],
+      });
+      final cache = TedNextByteCache(identity, p);
+      addTearDown(cache.dispose);
+      final warming = TedPlaybackRelay(f.auth, session, cache: cache);
+      addTearDown(warming.close);
+      await warming.preCache();
+      expect(cache.bytes, lessThanOrEqualTo(96 << 10));
+      final player = TedPlaybackRelay(f.auth, session, cache: cache);
+      addTearDown(player.close);
+      final before = f.calls.length;
+      final out = await f.get(target: await player.open(), range: 'bytes=249856-253951');
+      expect(await out.fold<List<int>>([], (all, b) => all..addAll(b)), f.payload.sublist(249856, 253952));
+      expect(f.calls.skip(before).map((c) => c.$1), [
+        'HEAD',
+      ], reason: 'startup metadata must not be fetched again after Next');
+    }, DirectHttp()),
+  );
+
+  test('initialization ranges stay bounded and invalid server ranges are rejected', () {
+    Map<String, dynamic> json(List<Map<String, int>> ranges) => {
+      'size': 256 << 10,
+      'etag': '"same-file"',
+      'resume_ms': 80000,
+      'duration_ms': 100000,
+      'start': 64 << 10,
+      'end': 128 << 10,
+      'ahead_bytes': 64 << 10,
+      'back_bytes': 32 << 10,
+      'initialization_ranges': ranges,
+    };
+    for (final ranges in [
+      [
+        {'start': -1, 'end': 10},
+      ],
+      [
+        {'start': 10, 'end': 256 << 10},
+      ],
+      List.generate(65, (_) => {'start': 0, 'end': 10}),
+    ]) {
+      expect(() => TedCachePlan.fromJson(json(ranges)), throwsA(isA<TedFailure>()));
+    }
+    final p = TedCachePlan.fromJson(
+      json([
+        {'start': 0, 'end': (256 << 10) - 1},
+      ]),
+    );
+    final cache = TedNextByteCache(identity, p);
+    addTearDown(cache.dispose);
+    for (final range in p.ranges) {
+      cache.put(range.$1, List.filled(range.$2 - range.$1 + 1, 1));
+    }
+    expect(cache.bytes, lessThanOrEqualTo(96 << 10));
   });
 }
