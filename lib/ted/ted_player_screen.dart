@@ -21,6 +21,7 @@ import '../widgets/overlay_sheet.dart';
 import 'ted_client.dart';
 import 'ted_models.dart';
 import 'ted_playback.dart';
+import 'ted_startup_trace.dart';
 import 'ted_media_transport.dart';
 import 'ted_next_cache.dart';
 import 'ted_presentation.dart';
@@ -130,7 +131,12 @@ class _TeddyPlayerState extends State<TeddyPlayer> {
     localSubtitles: widget.localSubtitles,
     mediaTransport: widget.offline
         ? null
-        : TedPlaybackRelay(widget.client.auth, widget.session, cache: widget.nextCache),
+        : TedPlaybackRelay(
+            widget.client.auth,
+            widget.session,
+            cache: widget.nextCache,
+            traceStartup: tedStartupTraceEnabled || debugLoggingEnabled,
+          ),
     releasePlayer: widget.releasePlayer == null ? null : (player) => widget.releasePlayer!(player, _retainEngine),
     releaseForReplacement: widget.releaseForReplacement,
     retiringSourceId: widget.retiringSourceId,

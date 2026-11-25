@@ -1,3 +1,8 @@
+const tedLogBatchesSchema = '''CREATE TABLE IF NOT EXISTS ted_log_batches (
+ id TEXT PRIMARY KEY, scope TEXT NOT NULL, payload TEXT NOT NULL,
+ created_ms INTEGER NOT NULL, bytes INTEGER NOT NULL
+)''';
+
 /// TED data stays separate from upstream lossy watch-action rows. Forward-only
 /// schema changes preserve original event envelopes and device-owned downloads.
 const tedDownloadQueueSchema = '''CREATE TABLE ted_download_queue (
@@ -44,4 +49,5 @@ const tedSchema = [
   )''',
   tedDownloadQueueSchema,
   tedSeasonSourcesSchema,
+  tedLogBatchesSchema,
 ];

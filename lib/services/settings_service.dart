@@ -567,6 +567,7 @@ class SettingsService extends BaseSharedPreferencesService {
   static const String defaultCreditsPattern = r'(?:^|\b)(?:outro|closing|credits?|ending)(?:\b|$)|^ed(?:\s?\d+)?$';
 
   static const enableDebugLogging = BoolPref('enable_debug_logging', onWrite: setLoggerLevel);
+  static const sendDiagnosticLogs = BoolPref('send_diagnostic_logs', defaultValue: true);
   static const crashReporting = BoolPref('crash_reporting', defaultValue: true);
   static const enableHardwareDecoding = BoolPref('enable_hardware_decoding', defaultValue: true);
   static const enableHDR = BoolPref('enable_hdr', defaultValue: true);
@@ -1531,6 +1532,7 @@ class SettingsService extends BaseSharedPreferencesService {
     introPattern,
     creditsPattern,
     autoRemoveWatchedDownloads,
+    sendDiagnosticLogs,
     defaultQualityPreset,
     cellularQualityPreset,
     musicQualityPreset,

@@ -3,6 +3,7 @@ import 'package:drift/drift.dart';
 import '../database/app_database.dart';
 import 'ted_models.dart';
 import 'ted_source_models.dart';
+import '../utils/app_logger.dart';
 
 /// Public picker results only. Authorization and private URLs stay on TED.
 class TedSourceCache {
@@ -18,11 +19,18 @@ class TedSourceCache {
           variables: [Variable(scope), Variable(jsonEncode(media.toJson()))],
         )
         .getSingleOrNull();
-    if (row == null) return null;
+    if (row == null) {
+      if (debugLoggingEnabled) appLogger.d('TED source cache: phase=miss kind=${media.kind}');
+      return null;
+    }
     final age = now().millisecondsSinceEpoch - row.read<int>('saved_at');
-    if (age < 0 || age >= lifetime.inMilliseconds) return null;
+    if (age < 0 || age >= lifetime.inMilliseconds) {
+      if (debugLoggingEnabled) appLogger.d('TED source cache: phase=expired kind=${media.kind} age_ms=$age');
+      return null;
+    }
     final data = Map<String, dynamic>.from(jsonDecode(row.read<String>('value')) as Map);
     TedSourcePage.fromJson(data, media);
+    if (debugLoggingEnabled) appLogger.d('TED source cache: phase=hit kind=${media.kind} age_ms=$age');
     return {...data, '_cached': true};
   }
 

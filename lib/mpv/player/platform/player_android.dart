@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../../../models/audio_channel_limit.dart';
 import '../../../services/device_performance.dart';
 import '../../../services/settings_service.dart';
+import '../../../utils/app_logger.dart';
 import '../../models.dart';
 import '../player_base.dart';
 
@@ -88,6 +89,7 @@ class PlayerAndroid extends PlayerBase {
       final wasUsingMpvFallback = _usingMpvFallback;
       _usingMpvFallback = true;
       if (!wasUsingMpvFallback) {
+        appLogger.w('Native player: phase=backend_switched from=exoplayer to=mpv');
         clearTracks();
       }
       backendSwitchedController.add(null);

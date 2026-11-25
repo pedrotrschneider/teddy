@@ -25,6 +25,7 @@ const teddySettings = <Pref<Object?>>[
   SettingsService.exitFullscreenOnPlayerClose,
   SettingsService.downloadOnWifiOnly,
   SettingsService.autoRemoveWatchedDownloads,
+  SettingsService.sendDiagnosticLogs,
 ];
 
 Future<void> resetTeddySettings(SettingsService settings) async {

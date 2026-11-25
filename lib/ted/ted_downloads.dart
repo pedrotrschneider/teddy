@@ -437,6 +437,7 @@ class TedDownloads extends ChangeNotifier {
     try {
       await storage.resume();
     } catch (_) {
+      appLogger.w('TED storage: phase=move_recovery_incomplete');
       storageError = 'A download move is unfinished. Open Settings → Location to retry it.';
     }
     _root = await storage.root();
@@ -447,6 +448,7 @@ class TedDownloads extends ChangeNotifier {
       return Future.error(const TedFailure('download_in_use'));
     }
     final active = _running.keys.where((id) => !_paused.contains(id)).toList();
+    appLogger.i('TED storage: phase=move_started active_downloads=${active.length}');
     _paused.addAll(active);
     storagePhase = 'Pausing transfers';
     storageError = null;
@@ -478,7 +480,9 @@ class TedDownloads extends ChangeNotifier {
         );
         await storage.move(destination, rows.map((v) => v['id'] as String).toList());
         _root = await storage.root();
+        appLogger.i('TED storage: phase=move_completed downloads=${rows.length}');
       } catch (_) {
+        appLogger.w('TED storage: phase=move_failed_journal_retained');
         _root = await TedDownloadStorage(store, defaultRoot).root();
         storageError = 'Download move could not finish. Files are retained; choose the same location to retry.';
         rethrow;
@@ -1124,6 +1128,7 @@ class TedDownloads extends ChangeNotifier {
     if (_shutdown != null || _maintenance != null) return Future.error(const TedFailure('download_paused'));
     final id = saved['id'] as String;
     if (_running.containsKey(id)) return _running[id]!;
+    appLogger.i('TED download: phase=resume_requested download=$id');
     _paused.remove(id);
     late final Future<void> op;
     op = _limitedTransfer(Map.from(saved)).whenComplete(() {
@@ -1292,15 +1297,20 @@ class TedDownloads extends ChangeNotifier {
       await partial.rename(finalFile.path);
       v['status'] = 'complete';
       await persist();
+      appLogger.i('TED download: phase=complete download=$id received=${v['received']}');
     } on TedFailure catch (e) {
       _transfers.remove(id);
       v['status'] = e.code == 'download_paused' ? 'paused' : 'failed';
       v['error'] = e.code;
+      if (e.code != 'download_paused') {
+        appLogger.w('TED download: phase=failed download=$id code=${e.code} received=${v['received']}');
+      }
       await persist();
     } catch (_) {
       _transfers.remove(id);
       v['status'] = 'failed';
       v['error'] = 'download_failed';
+      appLogger.w('TED download: phase=failed download=$id code=download_failed received=${v['received']}');
       await persist();
     }
   }
@@ -1457,6 +1467,7 @@ class TedDownloads extends ChangeNotifier {
   }
 
   Future<void> pause(String id, {bool userRequested = true}) async {
+    appLogger.i('TED download: phase=pause_requested download=$id user_requested=$userRequested');
     final owner = scope, waiting = _waitingDownloads.containsKey(id);
     if (userRequested) _networkPaused.remove(id);
     _paused.add(id);

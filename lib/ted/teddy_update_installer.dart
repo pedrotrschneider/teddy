@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:path/path.dart' as p;
 import 'teddy_update_cleanup.dart';
 import 'teddy_updates.dart';
+import '../utils/app_logger.dart';
 
 class TeddyUpdateFailure implements Exception {
   final String message;
@@ -142,6 +143,7 @@ class TeddyUpdateInstaller {
   }
 
   Future<TeddyPreparedUpdate> prepare(TeddyUpdate update, void Function(String, double?) progress) async {
+    appLogger.i('Teddy update: phase=preparation_started version=${update.version}');
     final suffix = teddyUpdateAssetSuffix(Platform.operatingSystem, Abi.current());
     if (suffix == null) throw const TeddyUpdateFailure('This platform has no supported update package.');
     final name = 'Teddy-${update.version}-$suffix';
@@ -221,8 +223,10 @@ class TeddyUpdateInstaller {
           throw const TeddyUpdateFailure('The downloaded application failed signature validation.');
         }
       }
+      appLogger.i('Teddy update: phase=package_verified version=${update.version}');
       return TeddyPreparedUpdate(stage, target: target, payload: payload, ownership: ownership);
     } catch (_) {
+      appLogger.w('Teddy update: phase=preparation_failed');
       await ownership.close();
       await stage.delete(recursive: true);
       rethrow;

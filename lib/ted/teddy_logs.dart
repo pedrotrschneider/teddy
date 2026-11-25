@@ -1,15 +1,29 @@
 import 'dart:io';
+import 'dart:convert';
 import 'package:path/path.dart' as p;
 import '../utils/app_logger.dart';
 
 /// A bounded, already-redacted diagnostic file, also usable without a server.
 class TeddyLogs {
+  static final _sinks = <void Function(LogEntry)>{};
+  static void addSink(void Function(LogEntry) sink) => _sinks.add(sink);
+  static void removeSink(void Function(LogEntry) sink) => _sinks.remove(sink);
   static File? file;
   static Future<void> _writes = Future.value();
+  static int _pendingBytes = 0, _dropped = 0;
   static Future<void> initialize(Directory support) async {
     file = File(p.join(support.path, 'logs', 'teddy.log'));
     await file!.parent.create(recursive: true);
-    MemoryLogOutput.onEntry = _append;
+    MemoryLogOutput.onEntry = (entry) {
+      _append(entry);
+      for (final sink in _sinks.toList()) {
+        try {
+          sink(entry);
+        } catch (_) {
+          /* Diagnostics cannot interrupt playback. */
+        }
+      }
+    };
   }
 
   static void _append(LogEntry entry) {
@@ -17,9 +31,23 @@ class TeddyLogs {
         '${entry.timestamp.toUtc().toIso8601String()} ${entry.level.name.toUpperCase()} '
         '${entry.message}${entry.error == null ? '' : ' ${entry.error}'}\n';
     final line = raw.length <= 32768 ? raw : '${raw.substring(0, 32768)}…\n';
+    final bytes = utf8.encode(line).length;
+    if (_pendingBytes + bytes > 1 << 20) {
+      _dropped++;
+      return;
+    }
+    _pendingBytes += bytes;
     _writes = _writes
         .then((_) async {
           final current = file!;
+          if (_dropped > 0) {
+            final count = _dropped;
+            _dropped = 0;
+            await current.writeAsString(
+              'Teddy logs: dropped_events=$count reason=write_pressure\n',
+              mode: FileMode.append,
+            );
+          }
           if (await current.exists() && await current.length() > 2 * 1024 * 1024) {
             final previous = File('${current.path}.1');
             if (await previous.exists()) await previous.delete();
@@ -29,6 +57,9 @@ class TeddyLogs {
         })
         .catchError((Object _) {
           /* logging must not interrupt viewing */
+        })
+        .whenComplete(() {
+          _pendingBytes -= bytes;
         });
   }
 

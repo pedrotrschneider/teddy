@@ -12,7 +12,7 @@ import 'mpv/mpv.dart';
 import 'ted/ted_preparing_player.dart';
 import 'dart:async';
 import 'dart:io';
-import 'dart:ui' show AppExitResponse;
+import 'dart:ui' show AppExitResponse, PlatformDispatcher;
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'database/app_database.dart';
@@ -37,6 +37,7 @@ import 'ted/ted_client.dart';
 import 'ted/ted_sources.dart';
 import 'ted/ted_app_settings.dart';
 import 'ted/teddy_logs.dart';
+import 'ted/ted_log_uploader.dart';
 import 'ted/ted_browse_screen.dart';
 import 'ted/ted_presentation.dart';
 import 'ted/ted_profiles.dart';
@@ -52,6 +53,16 @@ import 'ted/teddy_update_cleanup.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  final frameworkError = FlutterError.onError;
+  FlutterError.onError = (details) {
+    appLogger.e('Teddy app: phase=framework_failure', error: details.exception, stackTrace: details.stack);
+    frameworkError?.call(details);
+  };
+  final asyncError = PlatformDispatcher.instance.onError;
+  PlatformDispatcher.instance.onError = (error, stack) {
+    appLogger.e('Teddy app: phase=unhandled_failure', error: error, stackTrace: stack);
+    return asyncError?.call(error, stack) ?? false;
+  };
   runApp(const _TeddyStartup());
 }
 
@@ -74,11 +85,16 @@ class _TeddyStartupState extends State<_TeddyStartup> {
   @override
   void initState() {
     super.initState();
-    _lifecycle = AppLifecycleListener(onExitRequested: _requestExit, onResume: _updateCleanup.check);
+    _lifecycle = AppLifecycleListener(
+      onExitRequested: _requestExit,
+      onResume: _updateCleanup.check,
+      onStateChange: (state) => appLogger.i('Teddy app: phase=lifecycle state=${state.name}'),
+    );
     unawaited(_startup = _start());
   }
 
   Future<AppExitResponse> _requestExit() async {
+    appLogger.i('Teddy app: phase=exit_requested');
     _updateCleanup.stop();
     if (mounted) {
       setState(() {
@@ -103,9 +119,10 @@ class _TeddyStartupState extends State<_TeddyStartup> {
     setState(() => _failed = false);
     try {
       final settings = await prefs.SettingsService.getInstance();
-      await initializeTeddyPlatform(settings).timeout(const Duration(seconds: 20));
       final support = await getApplicationSupportDirectory();
       await TeddyLogs.initialize(support);
+      appLogger.i('Teddy app: phase=startup');
+      await initializeTeddyPlatform(settings).timeout(const Duration(seconds: 20));
       if (mounted && !_exiting) _updateCleanup.start();
       appLogger.i(
         'TV mode: ${PlatformDetector.isTV()}; detection: ${TvDetectionService.tvDetectionReasonsSync().join(",")}',
@@ -117,7 +134,9 @@ class _TeddyStartupState extends State<_TeddyStartup> {
       _deviceId = await _store!.installationDevice();
       _downloadRoot = Directory(p.join(support.path, 'ted-downloads'));
       if (mounted && !_exiting) setState(() => _ready = true);
-    } catch (_) {
+      appLogger.i('Teddy app: phase=ready');
+    } catch (error, stack) {
+      appLogger.e('Teddy app: phase=startup_failed', error: error, stackTrace: stack);
       if (mounted) setState(() => _failed = true);
     }
   }
@@ -247,6 +266,20 @@ class _TeddyHomeState extends State<TeddyHome> {
   TedPlayerEnginePool _engines = TedPlayerEnginePool();
   final _nextWork = <TedNextPreparation>{};
   final _nextDevices = <TedNextDevicePreparation>{};
+  TedLogUploader? _logUploader;
+  Future<void>? _logSetup;
+  Future<void> _startLogUploader() async {
+    final settings = await prefs.SettingsService.getInstance();
+    if (!mounted || (_shutdown?.closing ?? false)) return;
+    _logUploader = TedLogUploader(
+      store: widget.store,
+      auth: () => _auth,
+      active: () => mounted && !_showProfiles && !(_shutdown?.closing ?? false),
+      settings: settings,
+    );
+    _logUploader!.resume();
+  }
+
   void _discardNextWork() {
     for (final work in _nextWork) {
       work.discard();
@@ -277,6 +310,8 @@ class _TeddyHomeState extends State<TeddyHome> {
   TedAppShutdown? _shutdown;
   Future<void> _stopServices() async {
     _sync?.cancel();
+    await _logSetup;
+    await _logUploader?.close();
     await _cancelNextWork();
     await _engines.close();
     // Cancels network work without signing out or deleting saved credentials.
@@ -293,6 +328,7 @@ class _TeddyHomeState extends State<TeddyHome> {
   void initState() {
     super.initState();
     _profiles.addListener(_storageChanged);
+    unawaited(_logSetup = _startLogUploader());
     _pictures.addListener(_storageChanged);
     unawaited(_restoration = _restore());
     _sync = Timer.periodic(const Duration(seconds: 30), (_) => _syncHistory());
@@ -307,6 +343,7 @@ class _TeddyHomeState extends State<TeddyHome> {
 
   void _syncHistory() {
     if (_profiles.accessUnavailable || _showProfiles) return;
+    _logUploader?.resume();
     _downloads.pumpQueue();
     unawaited(_downloads.applyPolicies().catchError((Object _) {}));
     if (_shutdown?.closing ?? false) return;
@@ -437,7 +474,12 @@ class _TeddyHomeState extends State<TeddyHome> {
   }
 
   Future<void> _pauseProfile() async {
+    appLogger.i('TED profile: phase=pausing');
+    final logsPaused = _logUploader?.pause();
     Navigator.of(context, rootNavigator: true).popUntil((r) => r.isFirst);
+    await logsPaused;
+    await _logSetup;
+    await _logUploader?.pause();
     await _cancelNextWork();
     await _engines.close();
     final scope = tedOfflineScope(_auth);
@@ -463,6 +505,7 @@ class _TeddyHomeState extends State<TeddyHome> {
   }
 
   void _newConnection([String? key]) {
+    appLogger.i('TED profile: phase=connection_replaced');
     _discardNextWork();
     unawaited(_engines.close());
     _engines = TedPlayerEnginePool();
@@ -860,6 +903,7 @@ class _TeddyHomeState extends State<TeddyHome> {
   @override
   void dispose() {
     if (_shutdown?.stopServices == _stopServices) _shutdown?.stopServices = null;
+    unawaited(_logUploader?.close());
     _sync?.cancel();
     _discardNextWork();
     unawaited(_engines.close());

@@ -277,7 +277,7 @@ class TedPlayback extends ChangeNotifier {
       // The TED entry does not run Plezy's main/bootstrap, so own this prerequisite.
       _diagnostic('initializing');
       final settings = await SettingsService.getInstance();
-      if (player.playerType == 'mpv' && tedStartupTraceEnabled) {
+      if (player.playerType == 'mpv' && (tedStartupTraceEnabled || settings.read(SettingsService.enableDebugLogging))) {
         appLogger.i('TED startup trace: enabled=true session=${session.id}');
         await player.setStartupTracing(true);
       }

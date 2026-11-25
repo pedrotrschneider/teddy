@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io' show HttpDate;
+import 'dart:io' show HttpDate, gzip;
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
@@ -93,6 +93,7 @@ class TedAuth {
     }
     _credentials = value;
     _offlineIdentity = value;
+    appLogger.i('TED auth: phase=restored');
     return true;
   });
 
@@ -121,6 +122,7 @@ class TedAuth {
     if (_closed) throw const TedFailure('sign_in_required');
     _credentials = value;
     _offlineIdentity = value;
+    appLogger.i('TED auth: phase=signed_in');
   });
 
   Future<void> _rotate() => _exclusive(() async {
@@ -149,7 +151,9 @@ class TedAuth {
       await store.save(replacement);
       if (_closed) throw const TedFailure('sign_in_required');
       _credentials = replacement;
+      appLogger.i('TED auth: phase=refresh_saved');
     } catch (_) {
+      appLogger.w('TED auth: phase=refresh_uncertain_sign_in_required');
       // Never retry the old refresh token after uncertain commit/save. Pending
       // state is retained for crash recovery; a new login creates a new family.
       _credentials = null;
@@ -194,6 +198,17 @@ class TedAuth {
     return _object(await _authenticated(method, path, body: body, abortTrigger: abortTrigger));
   }
 
+  Future<Map<String, dynamic>> uploadLogs(Map<String, dynamic> batch, {Future<void>? abortTrigger}) async => _object(
+    await _authenticated(
+      'POST',
+      '/api/client/v1/diagnostics/batches',
+      body: batch,
+      compress: true,
+      maxBytes: 16384,
+      abortTrigger: abortTrigger,
+    ),
+  );
+
   /// Account pictures use the active rotating credential owner, never a public
   /// URL or an inactive profile's credentials.
   Future<http.Response> userPicture(int id) {
@@ -223,6 +238,7 @@ class TedAuth {
     Map<String, dynamic>? body,
     int maxBytes = 2 << 20,
     Future<void>? abortTrigger,
+    bool compress = false,
   }) async {
     final first = await headers();
     final base = server!;
@@ -235,6 +251,7 @@ class TedAuth {
       body: body,
       maxBytes: maxBytes,
       abortTrigger: abortTrigger,
+      compress: compress,
     );
     if (epoch != _epoch || _closed) throw const TedFailure('sign_in_required');
     if (response.statusCode == 401) {
@@ -250,11 +267,19 @@ class TedAuth {
         body: body,
         maxBytes: maxBytes,
         abortTrigger: abortTrigger,
+        compress: compress,
       );
       if (epoch != _epoch || _closed) throw const TedFailure('sign_in_required');
       if (response.statusCode == 401) {
         _credentials = null;
         throw const TedFailure('sign_in_required');
+      }
+    }
+    if (path == '/api/client/v1/diagnostics/batches') {
+      if (response.statusCode == 404) throw const TedFailure('diagnostics_unsupported');
+      if (const [400, 409, 413, 415].contains(response.statusCode)) throw const TedFailure('diagnostics_invalid');
+      if (response.statusCode == 429) {
+        throw TedFailure('diagnostics_limited', retryAfter: tedRetryAfter(response.headers['retry-after']));
       }
     }
     _requireSuccess(response, base);
@@ -296,10 +321,13 @@ class TedAuth {
     Map<String, dynamic>? body,
     int maxBytes = 2 << 20,
     Future<void>? abortTrigger,
+    bool compress = false,
   }) async {
     if (_closed || !path.startsWith('/api/client/v1/') || path.contains('://') || path.contains('#')) {
       throw const TedFailure('invalid_response');
     }
+    final timing = Stopwatch()..start();
+    final category = path.split('/').length > 4 ? path.split('/')[4].split('?').first : 'request';
     final abort = Completer<void>();
     // Source aggregation and selected-file preparation each have a bounded
     // network budget. Keep login/refresh/search on their ordinary deadline.
@@ -334,7 +362,12 @@ class TedAuth {
       });
     if (body != null) {
       request.headers['Content-Type'] = 'application/json';
-      request.body = jsonEncode(body);
+      if (compress) {
+        request.headers['Content-Encoding'] = 'gzip';
+        request.bodyBytes = gzip.encode(utf8.encode(jsonEncode(body)));
+      } else {
+        request.body = jsonEncode(body);
+      }
     }
     try {
       final response = await client.send(request);
@@ -343,8 +376,22 @@ class TedAuth {
         if (bytes.length + part.length > maxBytes) throw const TedFailure('invalid_response');
         bytes.addAll(part);
       }
+      if (path != '/api/client/v1/diagnostics/batches') {
+        final message =
+            'TED API: category=$category method=$method status=${response.statusCode} elapsed_ms=${timing.elapsedMilliseconds} response_bytes=${bytes.length}';
+        if (response.statusCode >= 400) {
+          appLogger.w(message);
+        } else if (timing.elapsedMilliseconds >= 2000) {
+          appLogger.i(message);
+        } else if (debugLoggingEnabled) {
+          appLogger.d(message);
+        }
+      }
       return http.Response.bytes(bytes, response.statusCode, headers: response.headers);
-    } on TedFailure {
+    } on TedFailure catch (failure) {
+      if (path != '/api/client/v1/diagnostics/batches') {
+        appLogger.w('TED API: phase=response_rejected category=$category method=$method code=${failure.code}');
+      }
       rethrow;
     } catch (_) {
       if (path == '/api/client/v1/playback/sessions' ||
@@ -358,6 +405,19 @@ class TedAuth {
               ? "timeout"
               : "transport"}',
         );
+      } else if (path != '/api/client/v1/diagnostics/batches') {
+        final message =
+            'TED API: phase=transport_failed category=$category method=$method '
+            'reason=${cancelled
+                ? "cancelled"
+                : timedOut
+                ? "timeout"
+                : "transport"} elapsed_ms=${timing.elapsedMilliseconds}';
+        if (cancelled) {
+          if (debugLoggingEnabled) appLogger.d(message);
+        } else {
+          appLogger.w(message);
+        }
       }
       throw const TedFailure('unavailable');
     } finally {

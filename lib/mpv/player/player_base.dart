@@ -1424,7 +1424,20 @@ abstract class PlayerBase with PlayerStreamControllersMixin implements Player {
       }
     }
     if (_disposed) return null;
-    return methodChannel.invokeMethod<T>(method, args);
+    try {
+      return await methodChannel.invokeMethod<T>(method, args);
+    } catch (error) {
+      final code = error is PlatformException && RegExp(r'^[a-zA-Z0-9_-]{1,64}$').hasMatch(error.code)
+          ? error.code
+          : 'native_failure';
+      final message = 'Native player: phase=command_failed backend=$playerType method=$method code=$code';
+      if (method == 'getProperty' || method == 'observeProperty') {
+        if (debugLoggingEnabled) appLogger.d(message);
+      } else {
+        appLogger.w(message);
+      }
+      rethrow;
+    }
   }
 
   @override

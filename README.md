@@ -141,6 +141,10 @@ The current automated suites cover these boundaries; this checklist is for owner
 
 [UPSTREAM_README.md](UPSTREAM_README.md) records Plezy revision/license. Retain LICENSE, UPSTREAM.json, third_party notices and native dependency notices. Unused app integrations being removed does not authorize dropping shared player/widget copyrights. Contribution guidance is in [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Diagnostic logs
+
+**Settings → Advanced → Send diagnostic logs** is on by default and uploads redacted logs to the active TED server. Turn it off to cancel uploads and remove queued diagnostic batches; local files remain available through Reveal logs. Only TED administrators can read uploaded logs. **Detailed diagnostic logging** is off by default and enables bounded startup measurements for newly opened playback when troubleshooting. TED's Logs page controls retention, default 90 days. Uploads use a bounded persistent profile queue, retry in the background and share the ordinary authentication owner. Startup events before a profile is active remain local. See [the diagnostic API, recovery and logging audit](../ted/docs/client-diagnostics.md).
+
 ## Automated releases
 
 Teddy's Android file sharing and launcher artwork providers use its application ID, `com.entertainmentdistrict.teddy`, so Plezy and Teddy can install side by side. Upgrading from an older Teddy build removes its cached launcher shelf entries that refer to the old artwork authority.

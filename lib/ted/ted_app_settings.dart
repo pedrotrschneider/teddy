@@ -10,8 +10,8 @@ import '../services/gamepad_service.dart';
 import '../services/macos_window_service.dart';
 import '../services/native_window_service.dart';
 import '../services/settings_service.dart' as prefs;
-import '../utils/platform_detector.dart';
 import '../utils/app_logger.dart';
+import '../utils/platform_detector.dart';
 
 /// The shared Plezy platform/preferences setup, without integration services
 /// for unrelated accounts, downloads, telemetry or update checks.

@@ -474,6 +474,20 @@ class TeddySettingsScreenState extends State<TeddySettingsScreen> {
           const SettingsSectionHeader('Advanced'),
           SettingsGroup(
             children: [
+              SettingSwitchTile(
+                pref: prefs.SettingsService.sendDiagnosticLogs,
+                icon: Icons.cloud_upload_outlined,
+                title: 'Send diagnostic logs to TED',
+                subtitle: 'Help diagnose problems across devices. Only TED administrators can read these logs.',
+                enabled: !_busy,
+              ),
+              SettingSwitchTile(
+                pref: prefs.SettingsService.enableDebugLogging,
+                icon: Icons.bug_report_outlined,
+                title: 'Detailed diagnostic logging',
+                subtitle: 'Include additional startup and network timings for troubleshooting.',
+                enabled: !_busy,
+              ),
               SettingNavigationTile(
                 icon: Icons.description_outlined,
                 title: 'View Logs',

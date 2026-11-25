@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'ted_compatibility.dart';
+import '../utils/app_logger.dart';
 
 /// Only our published numeric stable/rc releases participate in update checks.
 class TeddyVersion implements Comparable<TeddyVersion> {
@@ -111,7 +112,12 @@ class TeddyUpdates {
           throw const FormatException('Invalid release response');
         }
       }
-      return select(releases, current, candidates, requiredCompatibility: requiredCompatibility);
+      final selected = select(releases, current, candidates, requiredCompatibility: requiredCompatibility);
+      appLogger.i('Teddy update: phase=check_completed available=${selected != null} candidates=$candidates');
+      return selected;
+    } catch (_) {
+      appLogger.w('Teddy update: phase=check_failed');
+      rethrow;
     } finally {
       client.close();
     }

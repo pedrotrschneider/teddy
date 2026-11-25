@@ -8,6 +8,7 @@ import 'ted_client.dart';
 import 'ted_models.dart';
 import 'ted_season_source.dart';
 import 'ted_track_languages.dart';
+import '../utils/app_logger.dart';
 
 String? tedOfflineScope(TedAuth auth) =>
     auth.offlineServer == null || auth.offlineUserId == null || auth.deviceId == null
@@ -46,6 +47,7 @@ class TedLocalStore {
         'ted_source_cache',
         'ted_home_cache',
         'ted_profile_pictures',
+        'ted_log_batches',
       ]) {
         await db.customStatement('DELETE FROM $table WHERE scope=?', [scope]);
       }
@@ -301,6 +303,9 @@ class TedLocalStore {
               }
             }
             await client.events(events, sessions: registrations.values.toList());
+            appLogger.i(
+              'TED viewing sync: phase=acknowledged events=${events.length} sessions=${registrations.length}',
+            );
             // A partial/invalid response never reaches here; successful receipts are
             // committed together. Deletion failure simply retries identical UUIDs.
             await _serial(
