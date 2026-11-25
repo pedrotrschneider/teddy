@@ -72,6 +72,85 @@ void main() {
     expect(const TedTrackLanguages(subtitle: 'de').subtitleTrack(subtitles.skip(2).toList()).id, '6');
     expect(const TedTrackLanguages().subtitleTrack([]), SubtitleTrack.auto);
   });
+  test('initial container choices preserve policy and manual choices without guessing incomplete inventories', () {
+    final technical = <String, dynamic>{
+      'format': {'format_name': 'matroska,webm'},
+      'streams': [
+        {'index': 0, 'codec_type': 'video'},
+        {
+          'index': 1,
+          'codec_type': 'audio',
+          'tags': {'language': 'jpn'},
+          'disposition': {'default': 1},
+        },
+        {
+          'index': 2,
+          'codec_type': 'audio',
+          'tags': {'language': 'eng'},
+        },
+        {
+          'index': 3,
+          'codec_type': 'subtitle',
+          'tags': {'language': 'eng'},
+          'disposition': {'default': 1, 'forced': 1},
+        },
+        {
+          'index': 4,
+          'codec_type': 'subtitle',
+          'tags': {'language': 'eng'},
+        },
+        {'index': 5, 'codec_type': 'attachment'},
+        {'index': 6, 'codec_type': 'video'},
+      ],
+    };
+    final container = TedContainerTracks.fromTechnical(technical)!;
+    final initial = const TedTrackLanguages().initialTracks(container, 'ja');
+    expect(initial.audio?.id, '1');
+    expect(initial.subtitle?.id, '2'); // English dialogue, ahead of forced signs.
+    expect(const TedTrackLanguages(audio: 'en').initialTracks(container, 'ja').audio?.id, '2');
+    final manual = const TedTrackLanguages().initialTracks(
+      container,
+      'ja',
+      audioId: '2',
+      subtitleId: 'no',
+      secondarySubtitleId: '1',
+    );
+    expect(manual.audio?.id, '2');
+    expect(manual.subtitle, SubtitleTrack.off);
+    expect(manual.secondarySubtitle?.id, '1');
+    final external = const TedTrackLanguages().initialTracks(container, 'ja', externalSubtitles: true);
+    expect(external.audio?.id, '1');
+    expect(external.subtitle, isNull); // A sidecar can contain several native tracks.
+    final missing = const TedTrackLanguages().initialTracks(container, 'ja', audioId: '99', subtitleId: '99');
+    expect(missing.audio?.id, initial.audio?.id);
+    expect(missing.subtitle?.id, initial.subtitle?.id);
+    for (final broken in [
+      null,
+      {
+        'format': {'format_name': 'mpegts'},
+        'streams': technical['streams'],
+      },
+      {...technical, 'streams': (technical['streams'] as List).skip(1).toList()},
+      {
+        ...technical,
+        'streams': [
+          {'index': 0, 'codec_type': 'audio', 'tags': false},
+        ],
+      },
+      {
+        ...technical,
+        'streams': [
+          {
+            'index': 0,
+            'codec_type': 'audio',
+            'disposition': {'default': 'yes'},
+          },
+        ],
+      },
+    ]) {
+      expect(TedContainerTracks.fromTechnical(broken), isNull);
+    }
+  });
   test('local language writes merge, survive reopening, share episodes of a show and isolate accounts', () async {
     final directory = await Directory.systemTemp.createTemp('ted-language-test-');
     addTearDown(() => directory.delete(recursive: true));

@@ -846,6 +846,60 @@ void main() {
       );
     });
 
+    test('MPV initial tracks are file-local and invalid IDs cannot alter the outgoing file', () async {
+      final calls = <MethodCall>[];
+      await withMockPlayerChannels(
+        methodChannelName: 'com.plezy/mpv_player',
+        eventChannelName: 'com.plezy/mpv_player/events',
+        methodHandler: (call) async {
+          calls.add(call);
+          return call.method == 'initialize' ? true : null;
+        },
+        testBody: () async {
+          final player = PlayerNative();
+          try {
+            player.handlePlayerEvent('start-file', {'sourceId': 1});
+            _seedTracks(player);
+            final outgoing = player.state.tracks;
+            final before = calls.length;
+            await expectLater(
+              player.open(
+                Media('https://example.test/invalid.mkv'),
+                initialTracks: const TrackSelection(subtitle: SubtitleTrack(id: '1,aid=no')),
+              ),
+              throwsArgumentError,
+            );
+            expect(calls.length, before);
+            expect(player.state.tracks, outgoing);
+            await player.open(
+              Media('https://example.test/next.mkv'),
+              initialTracks: const TrackSelection(
+                audio: AudioTrack(id: '2'),
+                subtitle: SubtitleTrack(id: '1'),
+                secondarySubtitle: SubtitleTrack(id: '3'),
+              ),
+            );
+            expect(_setPropertyCallIndex(calls, 'aid'), -1);
+            expect(_setPropertyCallIndex(calls, 'sid'), -1);
+            expect(_setPropertyCallIndex(calls, 'secondary-sid'), -1);
+            expect(_loadfileArgs(calls).last, 'sid=1,secondary-sid=3,aid=2');
+            player.handlePropertyChange('track-list', const [
+              {'type': 'sub', 'id': 1, 'title': 'Outgoing'},
+            ]);
+            expect(player.state.tracks.subtitle, isEmpty);
+            player.handlePlayerEvent('start-file', {'sourceId': 2});
+            player.handlePropertyChange('track-list', const [
+              {'type': 'sub', 'id': 1, 'title': 'Incoming', 'selected': true},
+            ]);
+            expect(player.state.track.subtitle?.id, '1');
+            expect(player.state.tracks.subtitle.single.title, 'Incoming');
+          } finally {
+            await player.dispose();
+          }
+        },
+      );
+    });
+
     test('MPV combines server-positioned HLS options with quoted external subtitles', () async {
       final calls = <MethodCall>[];
       await withMockPlayerChannels(

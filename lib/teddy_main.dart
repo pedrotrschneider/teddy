@@ -42,7 +42,7 @@ import 'ted/ted_presentation.dart';
 import 'ted/ted_profiles.dart';
 import 'ted/ted_models.dart';
 import 'ted/ted_player_screen.dart';
-import 'ted/ted_player_route.dart';
+import 'ted/ted_player_page.dart';
 import 'ted/ted_app_bar.dart';
 import 'ted/ted_app_shutdown.dart';
 import 'ted/ted_focus_recovery.dart';
@@ -259,6 +259,7 @@ class _TeddyHomeState extends State<TeddyHome> {
   }
 
   Future<void> _cancelNextWork() async {
+    await _engines.cancelReplacement();
     final work = _nextWork.toList();
     _discardNextWork();
     await Future.wait(work.map((work) => work.cancelEffects()));
@@ -621,159 +622,238 @@ class _TeddyHomeState extends State<TeddyHome> {
     bool restoreSeasonSource = true,
   }) async {
     if (_shutdown?.closing ?? false) return;
+    appLogger.i('TED player flow: direct_replacement=${tedDirectNextReplacement && Platform.isMacOS}');
     var current = title;
     var continuing = false;
     TedNextPreparation? carried;
     TedNextDevicePreparation? carriedDevice;
-    while (mounted) {
-      String? source = sourceId;
-      try {
-        final scope = tedOfflineScope(_auth);
-        final preference = continuing || !restoreSeasonSource || scope == null
-            ? null
-            : await widget.store.seasonSource(scope, current.media);
-        if (!continuing && source == null && preference?.provider == 'stremio') {
-          final page = await _client.stremioSources(current.media);
-          source = page.preferredSource ?? preference!.match(page);
-          if (!mounted) return;
-          if (source == null && !current.ready) source = await chooseTedSource(context, page, client: _client);
-          if (source == null && !current.ready) return;
-        }
-        if (!continuing && source == null && !current.ready) {
-          final page = await _client.sources(current.media);
-          if (!mounted) return;
-          if (page.mapped) {
-            if (!page.ready) throw const TedFailure('mapping_not_ready');
-          } else {
-            source = page.autoSelect ?? page.preferredSource ?? await chooseTedSource(context, page, client: _client);
-            if (source == null || !mounted) return;
+    var replacementAllowed = true;
+    final replacementOwner = Object();
+    final flowEngines = _engines;
+    final playerPage = TedPlayerPageController(Navigator.of(context));
+    try {
+      while (mounted && !playerPage.cancelled) {
+        final isContinuation = continuing;
+        String? source = sourceId;
+        try {
+          final scope = tedOfflineScope(_auth);
+          final preference = continuing || !restoreSeasonSource || scope == null
+              ? null
+              : await widget.store.seasonSource(scope, current.media);
+          if (!continuing && source == null && preference?.provider == 'stremio') {
+            final page = await _client.stremioSources(current.media);
+            source = page.preferredSource ?? preference!.match(page);
+            if (!mounted) return;
+            if (source == null && !current.ready) source = await chooseTedSource(context, page, client: _client);
+            if (source == null && !current.ready) return;
           }
-        }
-        if (continuing && _browseKey.currentState?.hasPlaybackEpisode(current.media) != true) return;
-        final preparationAbort = Completer<void>();
-        final client = _client, engines = _engines;
-        final engineScope = tedOfflineScope(client.auth);
-        if (engineScope == null) throw const TedFailure('sign_in_required');
-        bool cancelled = false;
-        unawaited(preparationAbort.future.then((_) => cancelled = true));
-        Player? engine;
-        TedNextByteCache? cachedBytes;
-        final sessionFuture = client
-            .createSelectedSession(
-              current.media,
-              sourceId: source,
-              fromBeginning: fromBeginning,
-              abortTrigger: preparationAbort.future,
-            )
-            .then((session) async {
-              if (cancelled || !mounted || !identical(client, _client)) throw const TedFailure('sign_in_required');
-              final settings = prefs.SettingsService.instance;
-              engine = await engines.acquire(
-                engineScope,
-                exo: settings.read(prefs.SettingsService.useExoPlayer),
-                hardware: settings.read(prefs.SettingsService.enableHardwareDecoding),
-              );
-              if (cancelled || !mounted || !identical(client, _client)) {
-                await engines.release(engine!, retain: false);
-                throw const TedFailure('sign_in_required');
-              }
-              cachedBytes = carriedDevice?.take(session);
-              _discardNext(carried, carriedDevice);
-              carried = null;
-              carriedDevice = null;
-              return session;
-            });
-        // Keep immediate authentication failures observed until the route's
-        // FutureBuilder attaches, while still presenting that same error there.
-        unawaited(sessionFuture.then<void>((_) {}, onError: (Object _, StackTrace _) {}));
-        if (!mounted || (_shutdown?.closing ?? false)) return;
-        if (continuing && _browseKey.currentState?.hasPlaybackEpisode(current.media) != true) return;
-        final playingTitle = current;
-        TedNextPreparation? nextPreparation;
-        TedNextDevicePreparation? nextDevice;
-        TedNextPreparation prepareNext(TedTitle target, TedPlaybackSession session) {
-          _discardNext(nextPreparation, nextDevice);
-          nextDevice = TedNextDevicePreparation(
-            client,
-            engines.cacheBudget,
-            onEvicted: () => nextPreparation?.retryDeviceCache(),
-          );
-          final device = nextDevice!;
-          nextPreparation = TedNextPreparation(
-            client,
-            target,
-            session,
-            strategy: prefs.SettingsService.instance.read(prefs.SettingsService.teddyNextEpisodeMatching),
-            origin: client.sourceChoice(source),
-            cache: device.preCache,
-          );
-          _nextWork.add(nextPreparation!);
-          _nextDevices.add(device);
-          return nextPreparation!;
-        }
+          if (!continuing && source == null && !current.ready) {
+            final page = await _client.sources(current.media);
+            if (!mounted) return;
+            if (page.mapped) {
+              if (!page.ready) throw const TedFailure('mapping_not_ready');
+            } else {
+              source = page.autoSelect ?? page.preferredSource ?? await chooseTedSource(context, page, client: _client);
+              if (source == null || !mounted) return;
+            }
+          }
+          if (continuing && _browseKey.currentState?.hasPlaybackEpisode(current.media) != true) return;
+          final preparationAbort = Completer<void>();
+          final client = _client, engines = _engines;
+          final engineScope = tedOfflineScope(client.auth);
+          if (engineScope == null) throw const TedFailure('sign_in_required');
+          bool cancelled = false;
+          unawaited(preparationAbort.future.then((_) => cancelled = true));
+          Player? engine;
+          var engineClaimed = false;
+          Future<void> releaseUnusedEngine({bool retain = false}) async {
+            if (!engineClaimed) return;
+            engineClaimed = false;
+            final unused = engine;
+            if (unused != null) await engines.release(unused, retain: retain);
+          }
 
-        final result = await Navigator.of(context).push<TedPlayerExit>(
-          TedPlayerRoute(
-            isPrepared: (target) =>
-                engine?.playerType == 'mpv' &&
-                nextPreparation?.target.media == target.media &&
-                nextPreparation?.serverReady == true,
-            builder: (_) => TedPreparingPlayer(
+          TedNextByteCache? cachedBytes;
+          final sessionFuture = client
+              .createSelectedSession(
+                current.media,
+                sourceId: source,
+                fromBeginning: fromBeginning,
+                abortTrigger: preparationAbort.future,
+              )
+              .then((session) async {
+                if (cancelled ||
+                    playerPage.cancelled ||
+                    !replacementAllowed ||
+                    !mounted ||
+                    !identical(client, _client)) {
+                  throw const TedFailure('sign_in_required');
+                }
+                final settings = prefs.SettingsService.instance;
+                engine = await engines.acquire(
+                  engineScope,
+                  exo: settings.read(prefs.SettingsService.useExoPlayer),
+                  hardware: settings.read(prefs.SettingsService.enableHardwareDecoding),
+                );
+                engineClaimed = true;
+                if (cancelled ||
+                    playerPage.cancelled ||
+                    !replacementAllowed ||
+                    !mounted ||
+                    !identical(client, _client)) {
+                  await releaseUnusedEngine();
+                  throw const TedFailure('sign_in_required');
+                }
+                cachedBytes = carriedDevice?.take(session);
+                _discardNext(carried, carriedDevice);
+                carried = null;
+                carriedDevice = null;
+                return session;
+              })
+              .onError((Object error, StackTrace stack) async {
+                replacementAllowed = false;
+                if (isContinuation) playerPage.close();
+                await engines.cancelReplacement(owner: replacementOwner);
+                await releaseUnusedEngine(
+                  retain:
+                      isContinuation &&
+                      mounted &&
+                      identical(client, _client) &&
+                      client.auth.signedIn &&
+                      tedOfflineScope(client.auth) == engineScope,
+                );
+                Error.throwWithStackTrace(error, stack);
+              });
+          // Keep immediate authentication failures observed until the route's
+          // FutureBuilder attaches, while still presenting that same error there.
+          unawaited(sessionFuture.then<void>((_) {}, onError: (Object _, StackTrace _) {}));
+          if (!mounted ||
+              playerPage.cancelled ||
+              (_shutdown?.closing ?? false) ||
+              continuing && _browseKey.currentState?.hasPlaybackEpisode(current.media) != true) {
+            preparationAbort.complete();
+            return;
+          }
+          final playingTitle = current;
+          TedNextPreparation? nextPreparation;
+          TedNextDevicePreparation? nextDevice;
+          TedNextPreparation prepareNext(TedTitle target, TedPlaybackSession session) {
+            _discardNext(nextPreparation, nextDevice);
+            nextDevice = TedNextDevicePreparation(
+              client,
+              engines.cacheBudget,
+              onEvicted: () => nextPreparation?.retryDeviceCache(),
+            );
+            final device = nextDevice!;
+            nextPreparation = TedNextPreparation(
+              client,
+              target,
+              session,
+              strategy: prefs.SettingsService.instance.read(prefs.SettingsService.teddyNextEpisodeMatching),
+              origin: client.sourceChoice(source),
+              cache: device.preCache,
+            );
+            _nextWork.add(nextPreparation!);
+            _nextDevices.add(device);
+            return nextPreparation!;
+          }
+
+          bool preparedNext(TedTitle target) =>
+              engine?.playerType == 'mpv' &&
+              nextPreparation?.target.media == target.media &&
+              nextPreparation?.serverReady == true;
+
+          final result = await playerPage.show(
+            isPrepared: preparedNext,
+            builder: (_, pageEpisode) => TedPreparingPlayer(
               session: sessionFuture,
               metadata: TedPresentation(_client).item(playingTitle),
-              player: (session) => TeddyPlayer(
-                client: client,
-                session: session,
-                player: engine,
-                nextCache: cachedBytes,
-                releasePlayer: (player, retain) => engines.release(player, retain: retain),
-                onPrefetchNext: (target) {
-                  if (!identical(client, _client)) return;
-                  if (nextPreparation?.target.media != target.media) prepareNext(target, session);
-                },
-                title: playingTitle.name,
-                metadata: TedPresentation(_client).item(playingTitle),
-                journal: widget.store,
-                episodeTargets: playingTitle.media.kind == 'episode'
-                    ? client.adjacentEpisodes(playingTitle.media)
-                    : null,
-                onEpisodeTransition: (target) async => _browseKey.currentState?.openPlaybackEpisode(target),
-              ),
+              onFailure: isContinuation ? pageEpisode.fail : null,
+              player: (session) {
+                engineClaimed = false;
+                return TeddyPlayer(
+                  client: client,
+                  session: session,
+                  player: engine,
+                  nextCache: cachedBytes,
+                  onExit: pageEpisode.exit,
+                  onPlaybackFailure: isContinuation ? pageEpisode.fail : null,
+                  releasePlayer: (player, retain) => engines.release(player, retain: retain),
+                  canReplaceNext: tedDirectNextReplacement && Platform.isMacOS ? preparedNext : null,
+                  retiringSourceId: engine == null ? null : engines.replacingSourceId(engine!),
+                  releaseForReplacement: (player, sourceId) {
+                    if (!replacementAllowed ||
+                        !mounted ||
+                        !identical(client, _client) ||
+                        (_shutdown?.closing ?? false)) {
+                      return engines.release(
+                        player,
+                        retain: mounted && identical(client, _client) && client.auth.signedIn,
+                      );
+                    }
+                    return engines.releaseForReplacement(player, sourceId, owner: replacementOwner);
+                  },
+                  cancelReplacement: () => engines.cancelReplacement(owner: replacementOwner),
+                  onPrefetchNext: (target) {
+                    if (!identical(client, _client)) return;
+                    if (nextPreparation?.target.media != target.media) prepareNext(target, session);
+                  },
+                  title: playingTitle.name,
+                  metadata: TedPresentation(_client).item(playingTitle),
+                  journal: widget.store,
+                  episodeTargets: playingTitle.media.kind == 'episode'
+                      ? client.adjacentEpisodes(playingTitle.media)
+                      : null,
+                  onEpisodeTransition: (target) async => _browseKey.currentState?.openPlaybackEpisode(target),
+                );
+              },
             ),
-          ),
-        );
-        if (!mounted || result == null || result.action == TedPlayerAction.back || result.target == null) {
-          preparationAbort.complete();
-          _discardNext(nextPreparation, nextDevice);
-          return;
+          );
+          if (!mounted || result == null || result.action == TedPlayerAction.back || result.target == null) {
+            preparationAbort.complete();
+            unawaited(
+              releaseUnusedEngine().catchError((Object _) {
+                appLogger.w('TED player engine: phase=unused_retirement_failed');
+              }),
+            );
+            _discardNext(nextPreparation, nextDevice);
+            return;
+          }
+          final session = await sessionFuture;
+          final work = nextPreparation?.target.media == result.target!.media
+              ? nextPreparation!
+              : prepareNext(result.target!, session);
+          await work.serverPrepared;
+          if (!mounted ||
+              playerPage.cancelled ||
+              _browseKey.currentState?.hasPlaybackEpisode(result.target!.media) != true) {
+            _discardNext(nextPreparation, nextDevice);
+            return;
+          }
+          if (!work.serverReady) {
+            _discardNext(nextPreparation, nextDevice);
+            return;
+          }
+          work.handoff();
+          carried = work;
+          carriedDevice = nextDevice;
+          continuing = true;
+          current = result.target!;
+          sourceId = work.selected?.id;
+          fromBeginning = false;
+        } catch (_) {
+          _discardNext(carried, carriedDevice);
+          if (continuing && mounted) {
+            return;
+          }
+          rethrow;
         }
-        final session = await sessionFuture;
-        final work = nextPreparation?.target.media == result.target!.media
-            ? nextPreparation!
-            : prepareNext(result.target!, session);
-        await work.serverPrepared;
-        if (!mounted || _browseKey.currentState?.hasPlaybackEpisode(result.target!.media) != true) {
-          _discardNext(nextPreparation, nextDevice);
-          return;
-        }
-        if (!work.serverReady) {
-          _discardNext(nextPreparation, nextDevice);
-          return;
-        }
-        work.handoff();
-        carried = work;
-        carriedDevice = nextDevice;
-        continuing = true;
-        current = result.target!;
-        sourceId = work.selected?.id;
-        fromBeginning = false;
-      } catch (_) {
-        _discardNext(carried, carriedDevice);
-        if (continuing && mounted) {
-          return;
-        }
-        rethrow;
       }
+    } finally {
+      replacementAllowed = false;
+      playerPage.dispose();
+      _discardNext(carried, carriedDevice);
+      await flowEngines.cancelReplacement(owner: replacementOwner);
     }
   }
 

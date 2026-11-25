@@ -9,6 +9,7 @@ import '../services/settings_service.dart';
 import '../utils/app_logger.dart';
 import 'ted_client.dart';
 import 'ted_models.dart';
+import 'ted_startup_trace.dart';
 import 'ted_local_store.dart';
 import 'ted_track_languages.dart';
 import 'ted_media_transport.dart';
@@ -26,6 +27,8 @@ class TedPlayback extends ChangeNotifier {
   final List<SubtitleTrack> localSubtitles;
   final TedMediaTransport? mediaTransport;
   final Future<void> Function(Player)? releasePlayer;
+  final Future<void> Function(Player, int sourceId)? releaseForReplacement;
+  final int? retiringSourceId;
   final String? scope;
   final List<StreamSubscription<dynamic>> _subscriptions = [];
   final List<Map<String, dynamic>> _pending = [];
@@ -53,6 +56,8 @@ class TedPlayback extends ChangeNotifier {
   bool _ready = false;
   bool _nativeOpening = true, _queuedFileLoaded = false, _queuedRestart = false;
   int? _expectedNativeSource, _observedNativeSource;
+  int? _replacementSource;
+  bool _awaitingReplacementStart = false;
   bool _nativeStarted = false;
   int _pendingNativeDuration = 0;
   int? _pendingDurationSource;
@@ -84,6 +89,10 @@ class TedPlayback extends ChangeNotifier {
   TedFailure? _playerFailure;
   TedFailure? _syncFailure;
   TedFailure? get failure => _syncFailure ?? (_recovery == null ? _playerFailure : null);
+
+  /// Actual playback failures, independent of durable-report sync warnings.
+  /// Recovery owns transient failures until its bounded attempts have ended.
+  TedFailure? get playbackFailure => _recovery == null ? _playerFailure : null;
   bool get ready => _ready;
   bool get hasFirstFrame => _ready && _startupReported;
   bool get loading =>
@@ -119,12 +128,15 @@ class TedPlayback extends ChangeNotifier {
     this.localSubtitles = const [],
     this.mediaTransport,
     this.releasePlayer,
+    this.releaseForReplacement,
+    this.retiringSourceId,
   }) : server = client.auth.offlineServer ?? client.auth.server!,
        userId = client.auth.offlineUserId ?? client.auth.userId!,
        scope = tedOfflineScope(client.auth);
 
   Future<void> open() async {
     if (_closed || _stopping) return;
+    _awaitingReplacementStart = retiringSourceId != null;
     _subscriptions.add(
       player.streams.duration.listen((duration) {
         if (_stopping || _closed) return;
@@ -159,6 +171,7 @@ class TedPlayback extends ChangeNotifier {
     _subscriptions.add(
       player.streams.sourceStarted.listen((event) {
         _observedNativeSource = event.sourceId;
+        if (event.sourceId != retiringSourceId) _awaitingReplacementStart = false;
       }),
     );
     _subscriptions.add(
@@ -212,7 +225,7 @@ class TedPlayback extends ChangeNotifier {
     );
     _subscriptions.add(
       player.streams.log.listen((log) {
-        if (_stopping || _closed) return;
+        if (_stopping || _closed || _awaitingReplacementStart) return;
         // Log only the recognized MPV event with playback context. Native
         // messages can contain private URLs or headers.
         if (log.level == PlayerLogLevel.warn &&
@@ -231,7 +244,7 @@ class TedPlayback extends ChangeNotifier {
     );
     _subscriptions.add(
       player.streams.error.listen((error) {
-        if (_closed || _stopping) return;
+        if (_closed || _stopping || _awaitingReplacementStart) return;
         if (_recovery != null) {
           if (_recoveringOpen) _recoveryError = error;
           return;
@@ -264,6 +277,10 @@ class TedPlayback extends ChangeNotifier {
       // The TED entry does not run Plezy's main/bootstrap, so own this prerequisite.
       _diagnostic('initializing');
       final settings = await SettingsService.getInstance();
+      if (player.playerType == 'mpv' && tedStartupTraceEnabled) {
+        appLogger.i('TED startup trace: enabled=true session=${session.id}');
+        await player.setStartupTracing(true);
+      }
       if (player.playerType == 'mpv') await player.configureSubtitleFonts();
       _diagnostic('configuring_decoder');
       final hardware = settings.read(SettingsService.enableHardwareDecoding);
@@ -377,7 +394,31 @@ class TedPlayback extends ChangeNotifier {
     final backend = player;
     final duration = session.durationMs > 0 ? Duration(milliseconds: session.durationMs) : null;
     if (backend is PlayerNative) {
-      return backend.open(media, play: play, externalSubtitles: externalSubtitles, timelineDuration: duration);
+      final container = session.containerTracks;
+      final initial = container == null
+          ? null
+          : _languages.initialTracks(
+              container,
+              _originalLanguage,
+              audioId: _audioId,
+              subtitleId: _subtitleId,
+              secondarySubtitleId: _secondarySubtitleId,
+              externalSubtitles: externalSubtitles.isNotEmpty,
+            );
+      if (tedStartupTraceEnabled) {
+        appLogger.i(
+          'TED startup track: phase=initial_selection session=${session.id} '
+          'metadata=${container != null} audio=${_safeCodec(initial?.audio?.id)} '
+          'subtitle=${_safeCodec(initial?.subtitle?.id)} secondary=${_safeCodec(initial?.secondarySubtitle?.id)}',
+        );
+      }
+      return backend.open(
+        media,
+        play: play,
+        externalSubtitles: externalSubtitles,
+        timelineDuration: duration,
+        initialTracks: initial,
+      );
     }
     await backend.open(media, play: play, externalSubtitles: externalSubtitles, timelineDuration: duration);
     return null;
@@ -647,28 +688,23 @@ class TedPlayback extends ChangeNotifier {
         '$_originalLanguage|${_languages.audio}|${_languages.subtitle}|${tracks.audio.map((t) => '${t.id}:${t.language}').join(',')}|${tracks.subtitle.map((t) => '${t.id}:${t.language}').join(',')}';
     if (_trackSignature == signature) return;
     _startupPhase('tracks_begin');
-    AudioTrack? audio;
-    for (final candidate in [AudioTrack.auto, ...tracks.audio]) {
-      if (candidate.id == _audioId) {
-        audio = candidate;
-        break;
-      }
-    }
-    audio ??= _languages.audioTrack(tracks.audio, _originalLanguage);
-    SubtitleTrack? subtitle;
-    for (final candidate in [SubtitleTrack.off, SubtitleTrack.auto, ...tracks.subtitle]) {
-      if (candidate.id == _subtitleId) {
-        subtitle = candidate;
-        break;
-      }
-    }
-    subtitle ??= _languages.subtitleTrack(tracks.subtitle);
+    final audio = _languages.audioTrack(tracks.audio, _originalLanguage, selectedId: _audioId);
+    final subtitle = _languages.subtitleTrack(tracks.subtitle, selectedId: _subtitleId);
     appLogger.i(
       'TED subtitles: backend=${player.playerType} session=${session.id} '
       'available=${tracks.subtitle.length} selected=${_safeCodec(subtitle.id)} '
       'language=${tedLanguage(subtitle.language)} codec=${_safeCodec(subtitle.codec)}',
     );
+    if (tedStartupTraceEnabled) {
+      appLogger.i(
+        'TED startup track: phase=audio_request session=${session.id} '
+        'track=${_safeCodec(audio.id)} language=${tedLanguage(audio.language)} codec=${_safeCodec(audio.codec)}',
+      );
+    }
     await player.selectAudioTrack(audio);
+    if (tedStartupTraceEnabled) {
+      appLogger.i('TED startup track: phase=audio_accepted session=${session.id} track=${_safeCodec(audio.id)}');
+    }
     _startupPhase('audio_selected');
     if (!_closed && !_stopping) await player.selectSubtitleTrack(subtitle);
     _startupPhase('subtitles_selected');
@@ -1008,6 +1044,35 @@ class TedPlayback extends ChangeNotifier {
     });
   }
 
+  bool armDirectReplacement() {
+    if (releaseForReplacement == null ||
+        player.playerType != 'mpv' ||
+        offline ||
+        _closed ||
+        _stopping ||
+        !hasFirstFrame ||
+        _playerFailure != null ||
+        _recovery != null ||
+        _nativeOpening ||
+        !_nativeMatches ||
+        _expectedNativeSource == null) {
+      return false;
+    }
+    _replacementSource = _expectedNativeSource;
+    return true;
+  }
+
+  void cancelDirectReplacement() {
+    _replacementSource = null;
+    if (_stopping && _close == null) _closeTransport();
+  }
+
+  void _closeTransport() {
+    _transportClosing ??= mediaTransport?.close().catchError((Object _) {
+      _diagnostic('transport_close_failed', code: 'unavailable');
+    });
+  }
+
   Future<void> stop({bool naturalEof = false, bool markWatched = false}) {
     if (_stop != null) return _stop!;
     _progress?.cancel();
@@ -1016,9 +1081,7 @@ class TedPlayback extends ChangeNotifier {
     if (!_stopping) {
       _stopping = true;
       _wantsToPlay = false;
-      _transportClosing = mediaTransport?.close().catchError((Object _) {
-        _diagnostic('transport_close_failed', code: 'unavailable');
-      });
+      if (_replacementSource == null) _closeTransport();
     }
     _stop =
         (() async {
@@ -1038,6 +1101,7 @@ class TedPlayback extends ChangeNotifier {
           try {
             await player.pause();
           } catch (_) {
+            cancelDirectReplacement();
             /* disposal stops the failed core */
           }
         })().catchError((Object error) {
@@ -1065,8 +1129,19 @@ class TedPlayback extends ChangeNotifier {
       await subscription.cancel();
     }
     await _controls;
-    _diagnostic('disposing_native');
-    await Future.wait([releasePlayer == null ? player.dispose() : releasePlayer!(player), ?_transportClosing]);
+    final source = _replacementSource;
+    if (source != null && releaseForReplacement != null) {
+      _diagnostic('awaiting_replacement');
+      try {
+        await releaseForReplacement!(player, source);
+      } finally {
+        _closeTransport();
+        await _transportClosing;
+      }
+    } else {
+      _diagnostic('disposing_native');
+      await Future.wait([releasePlayer == null ? player.dispose() : releasePlayer!(player), ?_transportClosing]);
+    }
     _diagnostic('disposed');
     timelinePosition.dispose();
     dispose();

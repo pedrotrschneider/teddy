@@ -101,6 +101,15 @@ class MpvPlayerPlugin: NSObject, FlutterPlugin, FlutterStreamHandler, MpvPluginS
     case "setLogLevel":
       handleSetLogLevel(call: call, result: result)
 
+    case "setStartupTracing":
+      guard let args = call.arguments as? [String: Any], let enabled = args["enabled"] as? Bool,
+        let playerCore
+      else {
+        result(FlutterError(code: "INVALID_ARGS", message: "Missing startup tracing arguments/core", details: nil))
+        return
+      }
+      playerCore.setStartupTracing(enabled) { result(nil) }
+
     default:
       result(FlutterMethodNotImplemented)
     }

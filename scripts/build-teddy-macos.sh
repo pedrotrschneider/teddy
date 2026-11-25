@@ -2,6 +2,16 @@
 set -euo pipefail
 project_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$project_root/scripts/teddy-apple-env.sh" required
+direct_next="${TEDDY_DIRECT_NEXT_REPLACEMENT:-true}"
+case "$direct_next" in
+  true|false) ;;
+  *) echo 'TEDDY_DIRECT_NEXT_REPLACEMENT must be true or false.' >&2; exit 1 ;;
+esac
+startup_trace="${TEDDY_STARTUP_TRACE:-false}"
+case "$startup_trace" in
+  true|false) ;;
+  *) echo 'TEDDY_STARTUP_TRACE must be true or false.' >&2; exit 1 ;;
+esac
 # Native functions can resolve lazily. Replacing a running bundle's dylib can
 # map a second SQLite instance, then close the first instance's handle with it.
 # Build from an isolated source copy and publish an immutable release instead.
@@ -47,7 +57,10 @@ if [[ -d "$swift_repositories" ]]; then
   rsync -a "$swift_repositories/" "$build_workspace/source/build/macos/SourcePackages/repositories/"
 fi
 cd "$build_workspace/source"
+echo "Isolated source: $build_workspace/source"
 echo "Apple developer tools: $DEVELOPER_DIR"
+echo "Prepared Next direct replacement: $direct_next"
+echo "Detailed startup tracing: $startup_trace"
 xcodebuild -version
 if ! xcodebuild -checkFirstLaunchStatus; then
   echo 'Xcode first-launch setup is incomplete. Open Xcode and finish its license/component setup, then retry this build.' >&2
@@ -63,6 +76,8 @@ flutter pub get --enforce-lockfile
 flutter pub run build_runner build
 # Private local build; no Apple team, notarization, telemetry or upstream updater.
 flutter build macos --release --no-pub --target lib/teddy_main.dart \
+  --dart-define="TEDDY_DIRECT_NEXT_REPLACEMENT=$direct_next" \
+  --dart-define="TEDDY_STARTUP_TRACE=$startup_trace" \
   --dart-define=ENABLE_UPDATE_CHECK=false --dart-define=ENABLE_SENTRY=false \
   --build-name="$(tr -d '\r\n' < version.txt).0" \
   --dart-define="TEDDY_COMPATIBILITY_MAJOR=$(cut -d. -f1 version.txt)" \

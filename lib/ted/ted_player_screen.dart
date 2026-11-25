@@ -49,7 +49,13 @@ class TeddyPlayer extends StatefulWidget {
   final Future<void> Function(TedTitle target)? onEpisodeTransition;
   final void Function(TedTitle target)? onPrefetchNext;
   final Future<void> Function(Player player, bool retain)? releasePlayer;
+  final bool Function(TedTitle target)? canReplaceNext;
+  final Future<void> Function(Player, int sourceId)? releaseForReplacement;
+  final Future<void> Function()? cancelReplacement;
+  final int? retiringSourceId;
   final TedNextByteCache? nextCache;
+  final void Function(TedPlayerExit result)? onExit;
+  final VoidCallback? onPlaybackFailure;
   const TeddyPlayer({
     super.key,
     required this.client,
@@ -64,7 +70,13 @@ class TeddyPlayer extends StatefulWidget {
     this.onEpisodeTransition,
     this.onPrefetchNext,
     this.releasePlayer,
+    this.canReplaceNext,
+    this.releaseForReplacement,
+    this.cancelReplacement,
+    this.retiringSourceId,
     this.nextCache,
+    this.onExit,
+    this.onPlaybackFailure,
   });
   @override
   State<TeddyPlayer> createState() => _TeddyPlayerState();
@@ -99,7 +111,9 @@ class _TeddyPlayerState extends State<TeddyPlayer> {
   TedAppShutdown? _shutdown;
   bool _retainEngine = false;
   Future<void> _stopForExit() async {
+    _playback.cancelDirectReplacement();
     await _playback.stop();
+    await widget.cancelReplacement?.call();
     await _playback.closePlayer();
   }
 
@@ -118,12 +132,15 @@ class _TeddyPlayerState extends State<TeddyPlayer> {
         ? null
         : TedPlaybackRelay(widget.client.auth, widget.session, cache: widget.nextCache),
     releasePlayer: widget.releasePlayer == null ? null : (player) => widget.releasePlayer!(player, _retainEngine),
+    releaseForReplacement: widget.releaseForReplacement,
+    retiringSourceId: widget.retiringSourceId,
   );
   TedEpisodeTargets _targets = const TedEpisodeTargets();
   bool _seasonRemembered = false;
   bool _nextPrefetched = false;
   bool _canExit = false;
   bool _exiting = false;
+  bool _failureReported = false;
   final _chrome = PlayerChromeController();
   final _toast = PlayerToastController();
   final _firstFrame = ValueNotifier(false);
@@ -197,10 +214,12 @@ class _TeddyPlayerState extends State<TeddyPlayer> {
         'backend=${_playback.player.playerType} code=${error is TedFailure ? error.code : "playback_failed"}',
       );
       if (mounted) setState(() => _startupError = const TedFailure('playback_failed').message);
+      _returnOnPlaybackFailure();
     }
   }
 
   void _changed() {
+    if (_playback.playbackFailure != null) _returnOnPlaybackFailure();
     _firstFrame.value = _playback.hasFirstFrame;
     if (_playback.hasFirstFrame && _chapterRevision == 0) _chapterRevision = 1;
     if (!_nextPrefetched &&
@@ -235,20 +254,41 @@ class _TeddyPlayerState extends State<TeddyPlayer> {
     }
   }
 
+  void _returnOnPlaybackFailure() {
+    if (!mounted || widget.onPlaybackFailure == null || _failureReported || _exiting || _canExit) return;
+    _failureReported = true;
+    // Preserve the reusable engine on the target's details when possible.
+    // Disposal still saves the interrupted session and fences all listeners.
+    _retainEngine = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && !_exiting && !_canExit) widget.onPlaybackFailure?.call();
+    });
+  }
+
   Future<void> _exit({TedPlayerAction action = TedPlayerAction.back, String reason = 'user_navigation'}) async {
-    if (_exiting) return;
+    if (_exiting || _canExit) return;
     setState(() {
       _exiting = true;
     });
     try {
+      final candidate = action == TedPlayerAction.next || action == TedPlayerAction.completed ? _targets.next : null;
+      final replacing =
+          candidate != null && widget.canReplaceNext?.call(candidate) == true && _playback.armDirectReplacement();
       await _playback.stop(markWatched: action == TedPlayerAction.next);
-      // Reveal the details UI before retiring the HDR output. Native owns its
-      // SurfaceViews independently of this route and retains them through close;
-      // dispose below starts that retirement after the route transition.
+      // Ordinary exits reveal details before output retirement. A verified
+      // direct replacement keeps outputs and the old transport until the new
+      // native source starts, after this route's listeners have retired.
       final targets = action == TedPlayerAction.back
           ? const TedEpisodeTargets()
           : await widget.episodeTargets?.catchError((Object _) => const TedEpisodeTargets()) ?? _targets;
       final target = action == TedPlayerAction.previous ? targets.previous : targets.next;
+      if (!replacing ||
+          target == null ||
+          target.media != candidate.media ||
+          widget.canReplaceNext?.call(target) != true) {
+        _playback.cancelDirectReplacement();
+      }
+      if (action == TedPlayerAction.back) await widget.cancelReplacement?.call();
       _retainEngine = action != TedPlayerAction.back && target != null;
       if (!mounted) return;
       if (action == TedPlayerAction.back &&
@@ -268,10 +308,17 @@ class _TeddyPlayerState extends State<TeddyPlayer> {
       );
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
-          Navigator.of(context).pop(TedPlayerExit(action, target: action == TedPlayerAction.back ? null : target));
+          final result = TedPlayerExit(action, target: action == TedPlayerAction.back ? null : target);
+          if (widget.onExit case final onExit?) {
+            onExit(result);
+          } else {
+            Navigator.of(context).pop(result);
+          }
         }
       });
     } catch (_) {
+      _playback.cancelDirectReplacement();
+      await widget.cancelReplacement?.call();
       /* reporting failure is visible and exact events remain retryable */
     } finally {
       if (mounted) {
@@ -377,7 +424,6 @@ class _TeddyPlayerState extends State<TeddyPlayer> {
     HardwareKeyboard.instance.removeHandler(_backWithoutFocus);
     _routeFocus.dispose();
     if (_shutdown?.stopPlayback == _stopForExit) _shutdown?.stopPlayback = null;
-    widget.nextCache?.dispose();
     _volume?.dispose();
     _filters?.dispose();
     _chrome.dispose();
@@ -385,7 +431,8 @@ class _TeddyPlayerState extends State<TeddyPlayer> {
     _queue.dispose();
     _firstFrame.dispose();
     _playback.removeListener(_changed);
-    unawaited(_playback.closePlayer());
+    final retiredCache = widget.nextCache;
+    unawaited(_playback.closePlayer().whenComplete(() => retiredCache?.dispose()));
     unawaited(WakelockPlus.disable().catchError((Object _) {}));
     super.dispose();
   }

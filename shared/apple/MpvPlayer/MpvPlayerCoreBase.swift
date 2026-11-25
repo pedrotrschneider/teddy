@@ -251,6 +251,15 @@ class MpvPlayerCoreBase: NSObject {
   private var startupBeganAt: TimeInterval = 0
   private var startupPhases: Set<String> = []
   private var startupProfileComplete = true
+  private var requestedLogLevel = "warn"
+  #if os(macOS)
+    private var startupTracingEnabled = false
+    private var startupTraceAwaitingStart = false
+    private var startupTraceActive = false
+    private var startupTraceOccurrences: [String: Int] = [:]
+    private var startupTraceSequence = 0
+    private var startupTraceTimeout: DispatchWorkItem?
+  #endif
   /// Delegate deliveries deferred behind a failed file's END_FILE until the
   /// drain that dequeued it runs dry or reaches `errorEndFileDrainLimit`; nil
   /// otherwise. See the END_FILE case of `handleEvent`. Accessed only on
@@ -579,6 +588,7 @@ class MpvPlayerCoreBase: NSObject {
       let defaultLogLevel = "warn"
     #endif
     checkError(mpv_request_log_messages(mpv, defaultLogLevel))
+    requestedLogLevel = defaultLogLevel
 
     #if os(macOS)
       // Every URL Plezy opens is a media-server stream or a local file, never
@@ -632,10 +642,71 @@ class MpvPlayerCoreBase: NSObject {
   }
 
   func setLogLevel(_ level: String) {
-    _ = withActiveMpv { mpv in
-      mpv_request_log_messages(mpv, level)
+    queue.async { [weak self] in
+      guard let self else { return }
+      self.requestedLogLevel = level
+      self.applyStartupLogLevel()
     }
   }
+
+  private func applyStartupLogLevel() {
+    var level = requestedLogLevel
+    #if os(macOS)
+      if startupTraceActive || startupTraceAwaitingStart { level = "debug" }
+    #endif
+    _ = withActiveMpv { mpv in mpv_request_log_messages(mpv, level) }
+  }
+
+  #if os(macOS)
+    func setStartupTracing(_ enabled: Bool, completion: @escaping () -> Void) {
+      queue.async { [weak self] in
+        guard let self else {
+          DispatchQueue.main.async { completion() }
+          return
+        }
+        self.startupTracingEnabled = enabled
+        self.startupTraceAwaitingStart = enabled
+        self.startupTraceActive = false
+        self.startupTraceTimeout?.cancel()
+        self.applyStartupLogLevel()
+        if enabled { self.scheduleStartupTraceEnd(after: 45, phase: "trace_timeout") }
+        self.completeOnMain { completion() }
+      }
+    }
+
+    private func scheduleStartupTraceEnd(after delay: Double, phase: String) {
+      startupTraceTimeout?.cancel()
+      let work = DispatchWorkItem { [weak self] in
+        guard let self else { return }
+        self.profileStartupDetail(phase)
+        self.startupTraceActive = false
+        self.startupTraceAwaitingStart = false
+        self.applyStartupLogLevel()
+      }
+      startupTraceTimeout = work
+      queue.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    private func profileStartupDetail(_ phase: String, waitUs: Int? = nil) {
+      guard startupTraceActive, let source = startupSourceId, source == activeSourceId,
+        startupTraceSequence < 64
+      else { return }
+      let repeatable = [
+        "audio_decoder_open", "audio_output_configure", "video_decoder_open", "demux_seek", "demux_refresh_seek",
+        "seek_dequeued",
+      ].contains(phase)
+      let occurrence = (startupTraceOccurrences[phase] ?? 0) + 1
+      guard occurrence <= (repeatable ? 4 : 1) else { return }
+      startupTraceOccurrences[phase] = occurrence
+      startupTraceSequence += 1
+      var data: [String: Any] = [
+        "phase": phase, "elapsedUs": Int((ProcessInfo.processInfo.systemUptime - startupBeganAt) * 1_000_000),
+        "sequence": startupTraceSequence, "occurrence": occurrence,
+      ]
+      if let waitUs { data["waitUs"] = waitUs }
+      dispatchDelegateEvent(name: "startup-detail", data: data, sourceId: source)
+    }
+  #endif
 
   func setProperty(_ name: String, value: String) {
     setPropertyAsync(name, value: value) { _ in }
@@ -1244,8 +1315,14 @@ class MpvPlayerCoreBase: NSObject {
   }
 
   fileprivate func readEventsFromCallback() {
+    #if os(macOS)
+      let queuedAt = ProcessInfo.processInfo.systemUptime
+    #endif
     queue.async { [weak self] in
       guard let self else { return }
+      #if os(macOS)
+        let queueWaitUs = Int((ProcessInfo.processInfo.systemUptime - queuedAt) * 1_000_000)
+      #endif
 
       while let mpv = self.withActiveMpv({ $0 }) {
         let event = mpv_wait_event(mpv, 0)
@@ -1259,6 +1336,14 @@ class MpvPlayerCoreBase: NSObject {
         // joins it and counts like any other event.
         let deferring = self.deferredDeliveries != nil
         self.handleEvent(event.pointee)
+        #if os(macOS)
+          if queueWaitUs >= 10_000 {
+            let phase =
+              queueWaitUs >= 500_000
+              ? "event_queue_stall" : queueWaitUs >= 100_000 ? "event_queue_slow" : "event_queue_wait"
+            self.profileStartupDetail(phase, waitUs: queueWaitUs)
+          }
+        #endif
         if deferring {
           self.eventsDequeuedWhileDeferring += 1
           if self.eventsDequeuedWhileDeferring >= Self.errorEndFileDrainLimit {
@@ -1305,12 +1390,15 @@ class MpvPlayerCoreBase: NSObject {
   }
 
   private func postDelegateEvent(name: String, data: [String: Any]?) {
-    let postedAt = name == "startup-profile" ? ProcessInfo.processInfo.systemUptime : nil
+    let postedAt = name == "startup-profile" || name == "startup-detail" ? ProcessInfo.processInfo.systemUptime : nil
     DispatchQueue.main.async { [weak self] in
       guard let self, self.isLifecycleActive else { return }
       var deliveredData = data
       if let postedAt {
         deliveredData?["deliveryMs"] = Int((ProcessInfo.processInfo.systemUptime - postedAt) * 1000)
+        if name == "startup-detail" {
+          deliveredData?["deliveryUs"] = Int((ProcessInfo.processInfo.systemUptime - postedAt) * 1_000_000)
+        }
       }
       self.delegate?.onEvent(name: name, data: deliveredData)
     }
@@ -1318,7 +1406,8 @@ class MpvPlayerCoreBase: NSObject {
 
   private func profileStartup(_ phase: String) {
     guard !startupProfileComplete, let sourceId = startupSourceId,
-      sourceId == activeSourceId, startupPhases.insert(phase).inserted else { return }
+      sourceId == activeSourceId, startupPhases.insert(phase).inserted
+    else { return }
     dispatchDelegateEvent(
       name: "startup-profile",
       data: ["phase": phase, "elapsedMs": Int((ProcessInfo.processInfo.systemUptime - startupBeganAt) * 1000)],
@@ -1363,6 +1452,16 @@ class MpvPlayerCoreBase: NSObject {
       startupBeganAt = ProcessInfo.processInfo.systemUptime
       startupPhases.removeAll(keepingCapacity: true)
       startupProfileComplete = false
+      #if os(macOS)
+        if startupTracingEnabled {
+          startupTraceAwaitingStart = false
+          startupTraceActive = true
+          startupTraceOccurrences.removeAll(keepingCapacity: true)
+          startupTraceSequence = 0
+          applyStartupLogLevel()
+          scheduleStartupTraceEnd(after: 45, phase: "trace_timeout")
+        }
+      #endif
       cacheLock.lock()
       cachedEstimatedFps = 0
       displayCriteriaHeld = true
@@ -1377,16 +1476,29 @@ class MpvPlayerCoreBase: NSObject {
       }
       startupSourceId = activeSourceId
       profileStartup("start_file")
+      #if os(macOS)
+        profileStartupDetail("trace_started")
+      #endif
 
     case MPV_EVENT_FILE_LOADED:
       profileStartup("file_loaded")
       dispatchDelegateEvent(name: "file-loaded", data: nil, sourceId: activeSourceId)
+
+    case MPV_EVENT_SEEK:
+      #if os(macOS)
+        profileStartupDetail("seek_dequeued")
+      #endif
 
     case MPV_EVENT_VIDEO_RECONFIG:
       profileStartup("video_reconfig")
 
     case MPV_EVENT_AUDIO_RECONFIG:
       profileStartup("audio_reconfig")
+
+    case MPV_EVENT_QUEUE_OVERFLOW:
+      #if os(macOS)
+        profileStartupDetail("trace_overflow")
+      #endif
 
     case MPV_EVENT_END_FILE:
       // Queued after the video chain is torn down but before this client can
@@ -1435,6 +1547,12 @@ class MpvPlayerCoreBase: NSObject {
 
     case MPV_EVENT_PLAYBACK_RESTART:
       profileStartup("restart_received")
+      #if os(macOS)
+        profileStartupDetail("restart_dequeued")
+        // libmpv log messages can be dequeued after the corresponding event.
+        // Keep a short bounded tail so first-frame/audio markers are retained.
+        if startupTraceActive { scheduleStartupTraceEnd(after: 1, phase: "trace_complete") }
+      #endif
       // The first shown frame after a load or seek: the moment the presented
       // cadence is known (mpv decodes two frames before showing one).
       // `estimated-vf-fps` changes every frame, so it is read here instead
@@ -1492,6 +1610,17 @@ class MpvPlayerCoreBase: NSObject {
         let prefix = message.prefix.map { safeString($0) } ?? ""
         let level = message.level.map { safeString($0) } ?? ""
         let text = message.text.map { safeString($0) } ?? ""
+
+        #if os(macOS)
+          if startupTracingEnabled {
+            if let phase = MpvStartupTraceMarkers.phase(prefix: prefix, text: text) {
+              profileStartupDetail(phase)
+            }
+            // Requesting debug messages is solely for fixed diagnostic codes.
+            // Never forward the additional raw messages, URLs or headers.
+            if message.log_level.rawValue > MPV_LOG_LEVEL_WARN.rawValue { break }
+          }
+        #endif
 
         postDelegateEvent(
           name: "log-message",

@@ -7,6 +7,7 @@ import '../utils/app_logger.dart';
 import 'ted_auth.dart';
 import 'ted_models.dart';
 import 'ted_next_cache.dart';
+import 'ted_startup_trace.dart';
 
 /// The decoder keeps its own packet cache. Only the byte transport reconnects.
 abstract interface class TedMediaTransport {
@@ -39,6 +40,8 @@ class TedPlaybackRelay implements TedMediaTransport {
   bool _closed = false;
   int? _size;
   String? _etag;
+  late final TedStartupTrace _trace;
+  int _requestSequence = 0;
 
   TedPlaybackRelay(
     TedAuth auth,
@@ -47,6 +50,8 @@ class TedPlaybackRelay implements TedMediaTransport {
     Duration headerTimeout = const Duration(seconds: 20),
     this.readTimeout = const Duration(seconds: 8),
     this.cache,
+    bool traceStartup = tedStartupTraceEnabled,
+    void Function(String)? traceLog,
   }) : _auth = auth,
        _session = session,
        _server = auth.server!,
@@ -56,6 +61,7 @@ class TedPlaybackRelay implements TedMediaTransport {
        _headerTimeout = headerTimeout {
     final path = '/api/client/v1/playback/sessions/${session.id}/media';
     if (!tedUuid(session.id) || session.mediaPath != path) throw const TedFailure('invalid_response');
+    _trace = TedStartupTrace(session.id, enabled: traceStartup, log: traceLog);
     _client
       ..autoUncompress = false
       ..connectionTimeout = headerTimeout
@@ -63,6 +69,21 @@ class TedPlaybackRelay implements TedMediaTransport {
     if (cache != null && !cache!.disposed) {
       _size = cache!.plan.size;
       _etag = cache!.plan.etag;
+      final plan = cache!.plan;
+      _trace.event(
+        'cache_plan',
+        values: {
+          'size': plan.size,
+          'resume_ms': plan.resumeMs,
+          'playable_start': plan.start,
+          'playable_end': plan.end,
+          'ahead_bytes': plan.aheadBytes,
+          'back_bytes': plan.backBytes,
+        },
+      );
+      for (final span in plan.ranges) {
+        _trace.event('cache_plan_range', values: {'start': span.$1, 'end': span.$2});
+      }
     }
   }
 
@@ -77,6 +98,7 @@ class TedPlaybackRelay implements TedMediaTransport {
   Future<Uri> open() => _opening ??= _open();
 
   Future<Uri> _open() async {
+    _trace.event('listener_begin');
     _checkCurrent();
     final listener = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     if (!_current) {
@@ -84,6 +106,7 @@ class TedPlaybackRelay implements TedMediaTransport {
       throw const TedFailure('sign_in_required');
     }
     _listener = listener;
+    _trace.event('listener_ready', values: {'cached_bytes': cache?.bytes ?? 0});
     listener.listen((request) => unawaited(_serve(request)), onError: (Object _) {});
     return Uri(scheme: 'http', host: '127.0.0.1', port: listener.port, path: _path);
   }
@@ -105,11 +128,19 @@ class TedPlaybackRelay implements TedMediaTransport {
 
   Future<HttpClientResponse> _connect(_RelayRead read, String method, String range) async {
     for (var authentication = 0; ; authentication++) {
+      read.upstream++;
+      _io(read, 'auth_begin', {'upstream': read.upstream});
       _checkCurrent();
       final headers = await _auth.headers();
+      _io(read, 'auth_ready', {'upstream': read.upstream});
       _checkCurrent();
       if (read.cancelled) throw const _RelayClosed();
       final generation = read.generation;
+      _io(read, 'upstream_open_begin', {
+        'upstream': read.upstream,
+        'head': method == 'HEAD' ? 1 : 0,
+        ..._rangeNumbers(range),
+      });
       final request = await _client
           .openUrl(method, _server.resolve(_session.mediaPath))
           .then((request) {
@@ -123,6 +154,7 @@ class TedPlaybackRelay implements TedMediaTransport {
             return request;
           })
           .timeout(_headerTimeout);
+      _io(read, 'upstream_open_ready', {'upstream': read.upstream});
       read.request = request;
       if (!_current || read.cancelled) {
         request.abort();
@@ -135,6 +167,7 @@ class TedPlaybackRelay implements TedMediaTransport {
       request.headers.set(HttpHeaders.acceptEncodingHeader, 'identity');
       if (range.isNotEmpty) request.headers.set(HttpHeaders.rangeHeader, range);
       if (_etag != null && range.isNotEmpty) request.headers.set(HttpHeaders.ifRangeHeader, _etag!);
+      _io(read, 'upstream_headers_begin', {'upstream': read.upstream});
       final response = await request.close().timeout(
         _headerTimeout,
         onTimeout: () {
@@ -142,6 +175,11 @@ class TedPlaybackRelay implements TedMediaTransport {
           throw TimeoutException('media headers');
         },
       );
+      _io(read, 'upstream_headers_ready', {
+        'upstream': read.upstream,
+        'status': response.statusCode,
+        'length': response.contentLength,
+      });
       _checkCurrent();
       if (read.cancelled) {
         await response.listen(null).cancel();
@@ -198,7 +236,7 @@ class TedPlaybackRelay implements TedMediaTransport {
 
   Future<void> _serve(HttpRequest request) async {
     final response = request.response;
-    final read = _RelayRead();
+    final read = _RelayRead(++_requestSequence);
     var sentHeaders = false;
     _active.add(read);
     unawaited(response.done.then((_) => read.cancel(), onError: (Object _) => read.cancel()));
@@ -213,19 +251,24 @@ class TedPlaybackRelay implements TedMediaTransport {
       _checkCurrent();
       final originalRange = request.method == 'HEAD' ? '' : request.headers.value(HttpHeaders.rangeHeader) ?? '';
       if (!_RelayRange.validRequest(originalRange)) throw const _RelayStatus(416);
+      _io(read, 'request_received', {'head': request.method == 'HEAD' ? 1 : 0, ..._rangeNumbers(originalRange)});
       var range = originalRange;
       int? end;
       var retries = 0;
       final retained = cache;
       if (request.method == 'GET' && retained != null && !retained.disposed) {
         final wanted = _RelayRange.request(originalRange, retained.plan.size);
-        if (retained.read(wanted.start, wanted.end) != null) {
+        _io(read, 'cache_lookup', {'start': wanted.start, 'end': wanted.end});
+        final initialCache = retained.read(wanted.start, wanted.end);
+        if (initialCache != null) {
+          _io(read, 'cache_hit', {'start': wanted.start, 'end': wanted.end, 'available_bytes': initialCache.length});
           // Cached bytes never replace current authorization/file checks.
           // HEAD is cheap on the warmed server and uses fresh TED credentials.
           final authorized = await _connect(read, 'HEAD', '');
           final verified = _validate(authorized, '');
           await authorized.listen(null).cancel();
           if (verified.size != retained.plan.size) throw const TedFailure('source_selection_required');
+          _io(read, 'cache_verified', {'size': verified.size});
           end = wanted.end;
           read.offset = wanted.start;
           response.statusCode = originalRange.isEmpty ? 200 : 206;
@@ -246,8 +289,7 @@ class TedPlaybackRelay implements TedMediaTransport {
           while (bytes != null) {
             _checkCurrent();
             if (read.cancelled) throw const _RelayClosed();
-            response.add(bytes);
-            await response.flush();
+            await _write(read, response, bytes, cached: true);
             read.offset += bytes.length;
             if (read.offset > end) {
               _log('cache_reused', read.offset, 0, 'none');
@@ -257,8 +299,13 @@ class TedPlaybackRelay implements TedMediaTransport {
             bytes = retained.read(read.offset, end);
           }
           _log('cache_reused', read.offset, 0, 'none');
+          _io(read, 'cache_continuation', {'offset': read.offset});
           range = 'bytes=${read.offset}-$end';
+        } else {
+          _io(read, 'cache_miss', {'start': wanted.start, 'end': wanted.end});
         }
+      } else {
+        _io(read, 'cache_absent');
       }
       while (!read.cancelled && _current) {
         try {
@@ -266,6 +313,7 @@ class TedPlaybackRelay implements TedMediaTransport {
           final upstream = await _connect(read, request.method, range);
           final body = StreamIterator(upstream);
           read.body = body;
+          read.packets = 0;
           final span = _validate(upstream, range);
           if (sentHeaders && (span.start != read.offset || span.end != end)) {
             throw const TedFailure('invalid_response');
@@ -295,25 +343,24 @@ class TedPlaybackRelay implements TedMediaTransport {
             return;
           }
           var reusedCache = false;
-          while (await body.moveNext().timeout(readTimeout)) {
+          while (await _readBody(read, body)) {
             _checkCurrent();
             if (read.cancelled) throw const _RelayClosed();
             final bytes = body.current;
             if (bytes.length > end! - read.offset + 1) throw const TedFailure('invalid_response');
-            response.add(bytes);
-            await response.flush();
+            await _write(read, response, bytes, cached: false);
             read.offset += bytes.length;
             if (read.offset > end) break;
             var retained = cache?.read(read.offset, end);
             if (retained != null) {
+              _io(read, 'cache_hit_after_upstream', {'offset': read.offset, 'bytes': retained.length});
               await body.cancel();
               read.body = null;
               reusedCache = true;
               while (retained != null) {
                 _checkCurrent();
                 if (read.cancelled) throw const _RelayClosed();
-                response.add(retained);
-                await response.flush();
+                await _write(read, response, retained, cached: true);
                 read.offset += retained.length;
                 if (read.offset > end) break;
                 retained = cache?.read(read.offset, end);
@@ -389,6 +436,16 @@ class TedPlaybackRelay implements TedMediaTransport {
         }
       }
     } finally {
+      _io(read, 'request_finished', {
+        'offset': read.offset,
+        'cancelled': read.cancelled ? 1 : 0,
+        'cached_bytes': read.cachedBytes,
+        'cached_writes': read.cachedWrites,
+        'network_bytes': read.networkBytes,
+        'network_writes': read.networkWrites,
+        'max_flush_us': read.maxFlushUs,
+        'max_body_wait_us': read.maxBodyWaitUs,
+      });
       await read.cancel();
       _active.remove(read);
     }
@@ -408,8 +465,9 @@ class TedPlaybackRelay implements TedMediaTransport {
   }
 
   Future<void> _cacheRange(TedNextByteCache retained, int start, int end) async {
-    final read = _RelayRead();
+    final read = _RelayRead(++_requestSequence);
     _active.add(read);
+    _io(read, 'cache_fill_begin', {'start': start, 'end': end});
     try {
       while (start <= end) {
         _checkCurrent();
@@ -423,9 +481,10 @@ class TedPlaybackRelay implements TedMediaTransport {
         final upstream = await _connect(read, 'GET', range);
         final body = StreamIterator(upstream);
         read.body = body;
+        read.packets = 0;
         final span = _validate(upstream, range);
         read.offset = span.start;
-        while (await body.moveNext().timeout(readTimeout)) {
+        while (await _readBody(read, body)) {
           _checkCurrent();
           if (read.cancelled) throw const _RelayClosed();
           final bytes = body.current;
@@ -446,6 +505,7 @@ class TedPlaybackRelay implements TedMediaTransport {
         _ => 'unavailable',
       }, retryAfter: error.retryAfter);
     } finally {
+      _io(read, 'cache_fill_finished', {'offset': read.offset, 'cached_bytes': retained.bytes});
       await read.cancel();
       _active.remove(read);
     }
@@ -455,6 +515,7 @@ class TedPlaybackRelay implements TedMediaTransport {
   Future<void> close() {
     if (_closing != null) return _closing!;
     _closed = true;
+    _trace.event('relay_close', values: {'active_requests': _active.length});
     _cancelled.complete();
     _client.close(force: true);
     return _closing = (() async {
@@ -462,9 +523,84 @@ class TedPlaybackRelay implements TedMediaTransport {
       await _listener?.close(force: true);
     })();
   }
+
+  void _io(_RelayRead read, String phase, [Map<String, int> values = const {}]) =>
+      _trace.event(phase, request: read.id, values: values);
+
+  Map<String, int> _rangeNumbers(String range) {
+    if (range.isEmpty) return const {'start': 0, 'end': -1};
+    final match = RegExp(r'^bytes=(\d*)-(\d*)$').firstMatch(range);
+    if (match == null) return const {};
+    return {'start': int.tryParse(match[1]!) ?? -1, 'end': int.tryParse(match[2]!) ?? -1};
+  }
+
+  Future<bool> _readBody(_RelayRead read, StreamIterator<List<int>> body) async {
+    if (!_trace.active) return body.moveNext().timeout(readTimeout);
+    final clock = Stopwatch()..start();
+    final sampled = read.packets < 8;
+    if (sampled) _io(read, 'body_wait_begin', {'upstream': read.upstream, 'offset': read.offset});
+    try {
+      final hasData = await body.moveNext().timeout(readTimeout);
+      if (clock.elapsedMicroseconds > read.maxBodyWaitUs) read.maxBodyWaitUs = clock.elapsedMicroseconds;
+      if (sampled || clock.elapsedMilliseconds >= 20 || !hasData) {
+        _io(read, 'body_wait_done', {
+          'upstream': read.upstream,
+          'offset': read.offset,
+          'wait_us': clock.elapsedMicroseconds,
+          'bytes': hasData ? body.current.length : 0,
+          'first': read.packets == 0 ? 1 : 0,
+          'eof': hasData ? 0 : 1,
+        });
+      }
+      read.packets++;
+      return hasData;
+    } catch (_) {
+      _io(read, 'body_wait_failed', {
+        'upstream': read.upstream,
+        'offset': read.offset,
+        'wait_us': clock.elapsedMicroseconds,
+      });
+      rethrow;
+    }
+  }
+
+  Future<void> _write(_RelayRead read, HttpResponse response, List<int> bytes, {required bool cached}) async {
+    if (!_trace.active) {
+      response.add(bytes);
+      await response.flush();
+      return;
+    }
+    final clock = Stopwatch()..start();
+    final sampled = read.writes++ < 8 || (cached ? read.cachedWrites == 0 : read.networkWrites == 0);
+    final fields = {'cached': cached ? 1 : 0, 'offset': read.offset, 'bytes': bytes.length};
+    if (sampled) _io(read, 'write_begin', fields);
+    try {
+      response.add(bytes);
+      await response.flush();
+      if (cached) {
+        read.cachedBytes += bytes.length;
+        read.cachedWrites++;
+      } else {
+        read.networkBytes += bytes.length;
+        read.networkWrites++;
+      }
+      if (clock.elapsedMicroseconds > read.maxFlushUs) read.maxFlushUs = clock.elapsedMicroseconds;
+      if (sampled || clock.elapsedMilliseconds >= 20) {
+        _io(read, 'write_flushed', {...fields, 'wait_us': clock.elapsedMicroseconds});
+      }
+    } catch (_) {
+      _io(read, 'write_failed', {...fields, 'wait_us': clock.elapsedMicroseconds});
+      rethrow;
+    }
+  }
 }
 
 class _RelayRead {
+  final int id;
+  int upstream = 0, packets = 0, writes = 0;
+  int cachedBytes = 0, cachedWrites = 0, networkBytes = 0, networkWrites = 0;
+  int maxFlushUs = 0, maxBodyWaitUs = 0;
+  _RelayRead(this.id);
   HttpClientRequest? request;
   StreamIterator<List<int>>? body;
   bool cancelled = false;

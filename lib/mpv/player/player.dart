@@ -199,6 +199,9 @@ abstract class Player {
   /// over the event channel. Use "warn" in production and "v" for debugging.
   Future<void> setLogLevel(String level);
 
+  /// Bounded, privacy-filtered native startup diagnostics where supported.
+  Future<void> setStartupTracing(bool enabled);
+
   /// Execute a raw MPV command.
   ///
   /// [args] - Command and arguments as a list of strings.

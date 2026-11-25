@@ -6,6 +6,7 @@ import 'package:http/testing.dart';
 import 'package:plezy/ted/ted_auth.dart';
 import 'package:plezy/ted/ted_media_transport.dart';
 import 'package:plezy/ted/ted_models.dart';
+import 'package:plezy/ted/ted_next_cache.dart';
 
 import 'ted_auth_test.dart' show MemoryStore, pair, response;
 import 'ted_playback_test.dart' show sessionId, mediaPath;
@@ -19,6 +20,8 @@ class RelayFixture {
   Completer<void>? heldRetry;
   Completer<void>? heldRefresh;
   final refreshEntered = Completer<void>();
+  Completer<void>? heldHeaders;
+  final headersEntered = Completer<void>();
   bool dropFirst = false;
   bool rejectOld = false;
   bool alwaysUnavailable = false;
@@ -33,6 +36,9 @@ class RelayFixture {
   static Future<RelayFixture> create({
     Duration readTimeout = const Duration(seconds: 8),
     HttpClient? mediaClient,
+    TedNextByteCache? cache,
+    bool traceStartup = false,
+    void Function(String)? traceLog,
   }) async {
     final f = RelayFixture();
     f.origin = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -58,6 +64,9 @@ class RelayFixture {
       const TedPlaybackSession(sessionId, TedMediaIdentity('movie', 'tt1234567'), mediaPath, 100000, 0),
       readTimeout: readTimeout,
       client: mediaClient,
+      cache: cache,
+      traceStartup: traceStartup,
+      traceLog: traceLog,
     );
     return f;
   }
@@ -105,6 +114,10 @@ class RelayFixture {
       out.headers.set(HttpHeaders.contentRangeHeader, 'bytes $reportedStart-$end/$reportedSize');
     }
     out.contentLength = length;
+    if (heldHeaders != null) {
+      if (!headersEntered.isCompleted) headersEntered.complete();
+      await heldHeaders!.future;
+    }
     if (request.method == 'HEAD') {
       await out.close();
       return;
@@ -137,7 +150,7 @@ class RelayFixture {
   }
 
   Future<void> close() async {
-    for (final held in [heldBody, heldRetry, heldRefresh]) {
+    for (final held in [heldBody, heldRetry, heldRefresh, heldHeaders]) {
       if (held != null && !held.isCompleted) held.complete();
     }
     await relay.close();

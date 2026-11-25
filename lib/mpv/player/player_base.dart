@@ -61,6 +61,11 @@ abstract class PlayerBase with PlayerStreamControllersMixin implements Player {
   final _throttleSw = Stopwatch()..start();
   final Set<String> _startupProfilePhases = {};
   bool _startupProfileComplete = true;
+  bool _startupTracingEnabled = false;
+  final Set<String> _startupDetails = {};
+  bool _startupDetailComplete = true;
+  final Stopwatch _startupDetailClock = Stopwatch();
+  int _startupCacheSamples = 0, _startupCacheLastUs = -100000;
   int _lastEmitMs = 0;
   int _lastCacheStateMs = 0;
   int _positionMs = 0;
@@ -443,6 +448,7 @@ abstract class PlayerBase with PlayerStreamControllersMixin implements Player {
 
       case 'demuxer-cache-state':
         _handleDemuxerCacheState(value);
+        _profileStartupCache(value, sourceId);
         break;
 
       case 'volume':
@@ -490,10 +496,12 @@ abstract class PlayerBase with PlayerStreamControllersMixin implements Player {
 
       case 'aid':
         updateSelectedAudioTrack(value);
+        _profileStartupTrack('audio_track', value, sourceId);
         break;
 
       case 'sid':
         updateSelectedSubtitleTrack(value);
+        _profileStartupTrack('subtitle_track', value, sourceId);
         break;
 
       case 'secondary-sid':
@@ -583,6 +591,13 @@ abstract class PlayerBase with PlayerStreamControllersMixin implements Player {
     final sourceId = _finiteInt(data?['sourceId']);
     switch (name) {
       case 'start-file':
+        _startupDetails.clear();
+        _startupDetailComplete = false;
+        _startupDetailClock
+          ..reset()
+          ..start();
+        _startupCacheSamples = 0;
+        _startupCacheLastUs = -100000;
         _startupProfilePhases.clear();
         _startupProfileComplete = false;
         _deferringTrackList = false;
@@ -602,6 +617,7 @@ abstract class PlayerBase with PlayerStreamControllersMixin implements Player {
 
       case 'end-file':
         if (sourceId != null && _activeSourceId != null && sourceId != _activeSourceId) break;
+        _startupDetailComplete = true;
         _startupProfileComplete = true;
         final loadAbandoned = _primaryMediaLoadStarted && !_primaryFileLoaded;
         _primaryMediaLoadStarted = false;
@@ -722,6 +738,79 @@ abstract class PlayerBase with PlayerStreamControllersMixin implements Player {
         );
         break;
 
+      case 'startup-detail':
+        if (!_startupTracingEnabled || _startupDetailComplete || sourceId == null || sourceId != _activeSourceId) break;
+        final phase = data?['phase'];
+        if (!const {
+          'trace_started',
+          'trace_complete',
+          'trace_timeout',
+          'restart_dequeued',
+          'subtitle_wait',
+          'first_video_shown',
+          'audio_ready',
+          'audio_start',
+          'video_start',
+          'old_audio_wait',
+          'audio_sync_wait',
+          'video_output_configure',
+          'audio_output_configure',
+          'core_restart_complete',
+          'load_hook',
+          'video_decoder_open',
+          'hardware_decoding',
+          'software_decoding',
+          'video_decoder_format',
+          'audio_decoder_open',
+          'subtitle_fonts_begin',
+          'subtitle_ass_init',
+          'subtitle_font_provider',
+          'subtitle_font_select',
+          'demux_refresh_seek',
+          'demux_seek',
+          'container_detected',
+          'gpu_shader_compile',
+          'trace_overflow',
+          'event_queue_wait',
+          'event_queue_slow',
+          'event_queue_stall',
+          'seek_dequeued',
+        }.contains(phase)) {
+          break;
+        }
+        final elapsed = _finiteInt(data?['elapsedUs']);
+        final delivery = _finiteInt(data?['deliveryUs']);
+        final sequence = _finiteInt(data?['sequence']);
+        final wait = _finiteInt(data?['waitUs']);
+        final occurrence = data?.containsKey('occurrence') == true ? _finiteInt(data?['occurrence']) : 1;
+        if (elapsed == null ||
+            elapsed < 0 ||
+            elapsed > 90000000 ||
+            delivery == null ||
+            delivery < 0 ||
+            delivery > 90000000 ||
+            sequence == null ||
+            sequence < 1 ||
+            sequence > 64 ||
+            occurrence == null ||
+            occurrence < 1 ||
+            occurrence > 4 ||
+            data?.containsKey('waitUs') == true && (wait == null || wait < 0 || wait > 90000000) ||
+            !_startupDetails.add('$phase:$occurrence')) {
+          break;
+        }
+        logController.add(
+          PlayerLog(
+            level: PlayerLogLevel.info,
+            prefix: 'startup-detail',
+            text:
+                'phase=$phase source=$sourceId native_elapsed_us=$elapsed delivery_us=$delivery sequence=$sequence occurrence=$occurrence'
+                '${wait == null ? "" : " queue_wait_us=$wait"}',
+          ),
+        );
+        if (phase == 'trace_complete' || phase == 'trace_timeout') _startupDetailComplete = true;
+        break;
+
       case 'hdr-output-changed':
         hdrOutputChangedController.add(null);
         break;
@@ -740,6 +829,64 @@ abstract class PlayerBase with PlayerStreamControllersMixin implements Player {
         logController.add(PlayerLog(level: level, prefix: prefix, text: text));
         break;
     }
+  }
+
+  void _profileStartupCache(dynamic value, int? source) {
+    if (!_startupTracingEnabled ||
+        _startupProfileComplete ||
+        source == null ||
+        source != _activeSourceId ||
+        value is! Map ||
+        _startupCacheSamples >= 64) {
+      return;
+    }
+    final elapsed = _startupDetailClock.elapsedMicroseconds;
+    if (elapsed - _startupCacheLastUs < 200000 && _startupCacheSamples > 0) return;
+    _startupCacheSamples++;
+    _startupCacheLastUs = elapsed;
+    final numbers = <String, int>{};
+    for (final key in ['fw-bytes', 'total-bytes', 'cache-duration', 'reader-pts', 'cache-end', 'raw-input-rate']) {
+      final number = _finiteDouble(value[key]);
+      if (number == null || number.abs() > 9007199254740) continue;
+      final seconds = ['cache-duration', 'reader-pts', 'cache-end'].contains(key);
+      numbers['${key.replaceAll('-', '_')}${seconds ? '_ms' : ''}'] = (number * (seconds ? 1000 : 1)).round();
+    }
+    for (final key in ['underrun', 'idle', 'eof']) {
+      if (value[key] is bool) numbers[key] = value[key] == true ? 1 : 0;
+    }
+    logController.add(
+      PlayerLog(
+        level: PlayerLogLevel.info,
+        prefix: 'startup-detail',
+        text:
+            'phase=cache_sample source=$source dart_elapsed_us=$elapsed sample=$_startupCacheSamples '
+            '${numbers.entries.map((v) => '${v.key}=${v.value}').join(' ')}',
+      ),
+    );
+  }
+
+  void _profileStartupTrack(String phase, dynamic value, int? source) {
+    if (!_startupTracingEnabled || _startupDetailComplete || source == null || source != _activeSourceId) return;
+    final id = value is int
+        ? value
+        : value is String
+        ? int.tryParse(value)
+        : null;
+    final mode = id != null && id >= 0 && id <= 2147483647
+        ? '$id'
+        : value == 'auto'
+        ? 'auto'
+        : value == 'no' || value == false
+        ? 'no'
+        : null;
+    if (mode == null || !_startupDetails.add('$phase:$mode')) return;
+    logController.add(
+      PlayerLog(
+        level: PlayerLogLevel.info,
+        prefix: 'startup-detail',
+        text: 'phase=$phase source=$source track=$mode dart_elapsed_us=${_startupDetailClock.elapsedMicroseconds}',
+      ),
+    );
   }
 
   /// `mpv_error_string` for the codes an end-file event can carry, for a
@@ -1468,6 +1615,12 @@ abstract class PlayerBase with PlayerStreamControllersMixin implements Player {
   @override
   // ignore: no-empty-block - base no-op, overridden by platform subclasses
   Future<void> setLogLevel(String level) async {}
+
+  @override
+  Future<void> setStartupTracing(bool enabled) async {
+    _startupTracingEnabled = enabled;
+    _startupDetails.clear();
+  }
 
   @override
   Future<void> configureSubtitleFonts() async {

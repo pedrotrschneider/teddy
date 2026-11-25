@@ -10,6 +10,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/testing.dart';
 import 'package:plezy/mpv/player/player.dart';
+import 'package:plezy/mpv/models.dart';
 import 'package:plezy/mpv/player/player_native.dart';
 import 'package:plezy/mpv/player/platform/player_android.dart';
 import 'package:plezy/focus/transport_keys.dart';
@@ -625,6 +626,105 @@ void main() {
     await journal.close();
     await db.close();
     f.auth.close();
+  });
+
+  test('pinned track metadata selects during load and preserves manual choices on reconnect', () async {
+    final f = ControlFixture();
+    final db = AppDatabase.forTesting(NativeDatabase.memory());
+    final journal = TedLocalStore(db);
+    await withMockPlayerChannels(
+      methodChannelName: 'com.plezy/mpv_player',
+      eventChannelName: 'com.plezy/mpv_player/events',
+      methodHandler: f.method,
+      testBody: () async {
+        await f.auth.login('https://ted.example', 'fixture', '', 'Initial track fixture');
+        final session = TedPlaybackSession.fromJson({
+          'id': sessionId,
+          'media': {'kind': 'movie', 'id': 'tt1234567'},
+          'media_url': mediaPath,
+          'duration_ms': 100000,
+          'resume_ms': 10000,
+          'audio_languages': ['en', 'ja'],
+          'original_language': 'ja',
+          'technical': {
+            'format': {'format_name': 'matroska,webm'},
+            'streams': [
+              {'index': 0, 'codec_type': 'video'},
+              {
+                'index': 1,
+                'codec_type': 'audio',
+                'tags': {'language': 'jpn'},
+                'disposition': {'default': 1},
+              },
+              {
+                'index': 2,
+                'codec_type': 'audio',
+                'tags': {'language': 'eng'},
+              },
+              {
+                'index': 3,
+                'codec_type': 'subtitle',
+                'tags': {'language': 'eng'},
+                'disposition': {'forced': 1},
+              },
+              {
+                'index': 4,
+                'codec_type': 'subtitle',
+                'tags': {'language': 'eng'},
+              },
+            ],
+          },
+        }, const TedMediaIdentity('movie', 'tt1234567'));
+        await journal.rememberTrackLanguage(tedOfflineScope(f.auth)!, session.media, 'en', audio: true);
+        final playback = TedPlayback(TedClient(f.auth), f.player, session, journal: journal);
+        List<String> loadOptions() => f.calls
+            .where((c) => c.method == 'command' && (c.arguments as Map)['args'][0] == 'loadfile')
+            .map((c) => (c.arguments as Map)['args'].last as String)
+            .toList();
+        Future<void> loaded() async {
+          f.player.handlePlayerEvent('start-file', null);
+          f.player.handlePlayerEvent('file-loaded', null);
+          f.player.handlePropertyChange('track-list', [
+            {'type': 'audio', 'id': 1, 'lang': 'jpn', 'default': true},
+            {'type': 'audio', 'id': 2, 'lang': 'eng', 'selected': true},
+            {'type': 'sub', 'id': 1, 'lang': 'eng', 'forced': true},
+            {'type': 'sub', 'id': 2, 'lang': 'eng', 'selected': true},
+          ]);
+          f.player.handlePlayerEvent('playback-restart', {'positionSeconds': 10.0});
+          await Future<void>.delayed(Duration.zero);
+          while (playback.controlsBusy) {
+            await Future<void>.delayed(Duration.zero);
+          }
+        }
+
+        try {
+          await playback.open();
+          expect(loadOptions(), ['sid=2,secondary-sid=no,aid=2']);
+          expect(
+            f.calls.where((c) => c.method == 'setProperty' && ['aid', 'sid'].contains((c.arguments as Map)['name'])),
+            isEmpty,
+          );
+          await loaded();
+          final selections = f.calls.where(
+            (c) => c.method == 'setProperty' && ['aid', 'sid'].contains((c.arguments as Map)['name']),
+          );
+          expect(selections.map((c) => (c.arguments as Map)['value']), everyElement('2'));
+          await playback.selectAudioTrack(f.player.state.tracks.audio.first);
+          await playback.selectSubtitleTrack(SubtitleTrack.off);
+          await playback.reconnect();
+          expect(loadOptions().last, 'sid=no,secondary-sid=no,aid=1');
+          await loaded();
+          expect(playback.failure, isNull);
+          final sid = f.calls.lastWhere((c) => c.method == 'setProperty' && (c.arguments as Map)['name'] == 'sid');
+          expect((sid.arguments as Map)['value'], 'no');
+        } finally {
+          await playback.closePlayer();
+        }
+      },
+    );
+    f.auth.close();
+    await journal.close();
+    await db.close();
   });
 
   test('unbuffered seeks ignore optimistic and transient EOF until decoded playback resumes', () async {

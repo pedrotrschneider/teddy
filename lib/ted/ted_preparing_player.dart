@@ -6,16 +6,45 @@ import 'ted_player_loading.dart';
 
 /// Enters the player route immediately. Only a validated session may construct
 /// the actual player or emit playback reports.
-class TedPreparingPlayer extends StatelessWidget {
+class TedPreparingPlayer extends StatefulWidget {
   final Future<TedPlaybackSession> session;
   final MediaItem metadata;
   final Widget Function(TedPlaybackSession) player;
-  const TedPreparingPlayer({super.key, required this.session, required this.metadata, required this.player});
+  final VoidCallback? onFailure;
+  const TedPreparingPlayer({
+    super.key,
+    required this.session,
+    required this.metadata,
+    required this.player,
+    this.onFailure,
+  });
+  @override
+  State<TedPreparingPlayer> createState() => _TedPreparingPlayerState();
+}
+
+class _TedPreparingPlayerState extends State<TedPreparingPlayer> {
+  bool _failureQueued = false;
+  @override
+  void didUpdateWidget(covariant TedPreparingPlayer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.session, widget.session)) _failureQueued = false;
+  }
+
   @override
   Widget build(BuildContext context) => FutureBuilder<TedPlaybackSession>(
-    future: session,
+    future: widget.session,
     builder: (context, state) {
-      if (state.hasData) return player(state.data!);
+      if (state.hasData) return widget.player(state.data!);
+      if (state.connectionState == ConnectionState.done &&
+          state.hasError &&
+          widget.onFailure != null &&
+          !_failureQueued) {
+        _failureQueued = true;
+        final failedSession = widget.session;
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && identical(widget.session, failedSession)) widget.onFailure?.call();
+        });
+      }
       return Focus(
         onKeyEvent: (_, event) => handleBackKeyAction(event, () => Navigator.of(context).pop()),
         child: Focus(
@@ -33,7 +62,7 @@ class TedPreparingPlayer extends StatelessWidget {
                                 : const TedFailure('unavailable').message,
                           ),
                         )
-                      : TedPlayerLoading(media: metadata),
+                      : TedPlayerLoading(media: widget.metadata),
                 ),
                 Positioned(
                   top: 24,

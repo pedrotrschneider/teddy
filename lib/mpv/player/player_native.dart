@@ -374,8 +374,21 @@ class PlayerNative extends PlayerBase {
     Duration? timelineDuration,
     Duration timelineOffset = Duration.zero,
     bool startLivePlaylistFromBeginning = false,
+    TrackSelection? initialTracks,
   }) async {
     if (_nativeCoreUnavailable) return null;
+    final initialTrackOptions = <String, String>{};
+    for (final (name, id) in [
+      ('aid', initialTracks?.audio?.id),
+      ('sid', initialTracks?.subtitle?.id),
+      ('secondary-sid', initialTracks?.secondarySubtitle?.id),
+    ]) {
+      if (id == null) continue;
+      if (!RegExp(r'^(?:auto|no|[1-9][0-9]{0,5})$').hasMatch(id)) {
+        throw ArgumentError('Initial MPV selection requires an embedded track ID');
+      }
+      initialTrackOptions[name] = id;
+    }
     await _ensureInitialized();
     if (_nativeCoreUnavailable) return null;
     // `loadfile replace` (below) clears the native playlist, dropping any
@@ -410,6 +423,7 @@ class PlayerNative extends PlayerBase {
         isLive: isLive,
         externalSubtitles: externalSubtitles,
         startLivePlaylistFromBeginning: startLivePlaylistFromBeginning,
+        initialTrackOptions: initialTrackOptions,
       );
     } catch (_) {
       // Nothing loaded: no `start-file` will release the track-list gate, and
@@ -449,6 +463,7 @@ class PlayerNative extends PlayerBase {
     required bool isLive,
     required List<SubtitleTrack>? externalSubtitles,
     required bool startLivePlaylistFromBeginning,
+    required Map<String, String> initialTrackOptions,
   }) async {
     if (!audioOnly) await setVisible(true);
 
@@ -517,8 +532,14 @@ class PlayerNative extends PlayerBase {
       // deselects its subtitle, and the track-list update that follows
       // re-seeded the previous item's tracks over the list this open had
       // already cleared (#2323).
-      'sid=no',
-      'secondary-sid=no',
+      'sid=${initialTrackOptions['sid'] ?? 'no'}',
+      'secondary-sid=${initialTrackOptions['secondary-sid'] ?? 'no'}',
+      // TED can supply the policy choice from pinned container metadata.
+      // Enable it during initial selection, before demux read-ahead starts:
+      // enabling a subtitle after FILE_LOADED can require a refresh seek
+      // blocked behind an uncached HTTP read. Keep these file-local too;
+      // changing the outgoing file's properties revives the #2323 race.
+      if (initialTrackOptions['aid'] case final aid?) 'aid=$aid',
       // A server-positioned live playlist already starts at the requested
       // offset. FFmpeg's default (-3) can skip much of it before decoding.
       // Keep this file-local and append so other demuxer options survive.
@@ -969,6 +990,14 @@ class PlayerNative extends PlayerBase {
     if (_nativeCoreUnavailable || audioOnly || !Platform.isIOS) return;
     await _ensureInitialized();
     await invoke('awaitDisplayModeSwitch', {'extraDelayMs': extraDelayMs});
+  }
+
+  @override
+  Future<void> setStartupTracing(bool enabled) async {
+    await super.setStartupTracing(enabled);
+    if (_nativeCoreUnavailable || audioOnly || !Platform.isMacOS) return;
+    await _ensureInitialized();
+    await invoke('setStartupTracing', {'enabled': enabled});
   }
 
   @override

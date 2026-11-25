@@ -211,6 +211,64 @@ class TedCredentials {
   String toString() => 'TedCredentials(redacted)';
 }
 
+/// Complete, ordered track metadata for containers whose MPV track order
+/// matches ffprobe. Optional: older downloads and unprobed sources still use
+/// the native track list after opening.
+class TedContainerTracks {
+  final List<TedContainerTrack> audio, subtitles;
+  const TedContainerTracks({required this.audio, required this.subtitles});
+
+  static TedContainerTracks? fromTechnical(Object? value) {
+    if (value is! Map || value['format'] is! Map || value['streams'] is! List) return null;
+    final format = (value['format'] as Map)['format_name'];
+    // Matroska's native demuxer and libavformat's MOV demuxer enumerate the
+    // container tracks in stream order. Dynamic/program-based formats do not
+    // provide that guarantee; leave those to the actual native inventory.
+    if (!const {'matroska', 'matroska,webm', 'webm', 'mov', 'mp4', 'mov,mp4,m4a,3gp,3g2,mj2'}.contains(format)) {
+      return null;
+    }
+    final streams = value['streams'] as List;
+    if (streams.isEmpty || streams.length > 512) return null;
+    final audio = <TedContainerTrack>[], subtitles = <TedContainerTrack>[];
+    for (var index = 0; index < streams.length; index++) {
+      final stream = streams[index];
+      // Gaps, duplicates or reordered entries cannot safely predict IDs.
+      if (stream is! Map || stream['index'] is! int || stream['index'] != index || stream['codec_type'] is! String) {
+        return null;
+      }
+      final type = stream['codec_type'];
+      if (!const {'video', 'audio', 'subtitle', 'attachment', 'data'}.contains(type)) return null;
+      if (type != 'audio' && type != 'subtitle') continue;
+      final tags = stream['tags'], disposition = stream['disposition'];
+      if (tags != null && tags is! Map || disposition != null && disposition is! Map) return null;
+      final language = tags is Map ? tags['language'] : null;
+      final codec = stream['codec_name'];
+      final isDefault = disposition is Map ? disposition['default'] : null;
+      final isForced = disposition is Map ? disposition['forced'] : null;
+      if (language != null && (language is! String || language.length > 32) ||
+          codec != null && (codec is! String || codec.length > 64) ||
+          isDefault != null && isDefault != 0 && isDefault != 1 ||
+          isForced != null && isForced != 0 && isForced != 1) {
+        return null;
+      }
+      final track = TedContainerTrack(
+        language: language as String? ?? '',
+        codec: codec as String? ?? '',
+        isDefault: isDefault == 1,
+        isForced: isForced == 1,
+      );
+      (type == 'audio' ? audio : subtitles).add(track);
+    }
+    return TedContainerTracks(audio: List.unmodifiable(audio), subtitles: List.unmodifiable(subtitles));
+  }
+}
+
+class TedContainerTrack {
+  final String language, codec;
+  final bool isDefault, isForced;
+  const TedContainerTrack({this.language = '', this.codec = '', this.isDefault = false, this.isForced = false});
+}
+
 class TedPlaybackSession {
   Duration startPosition({int rewindSeconds = 0}) =>
       Duration(milliseconds: (resumeMs - rewindSeconds * 1000).clamp(0, resumeMs));
@@ -222,6 +280,7 @@ class TedPlaybackSession {
   final int resumeMs;
   final List<String> audioLanguages;
   final String originalLanguage;
+  final TedContainerTracks? containerTracks;
   final List<TedSubtitle> subtitles;
   final int watchRevision;
   final String source, addonId, bingeKey, downloadSourceSession;
@@ -233,6 +292,7 @@ class TedPlaybackSession {
     this.resumeMs, {
     this.audioLanguages = const ['en'],
     this.originalLanguage = '',
+    this.containerTracks,
     this.subtitles = const [],
     this.watchRevision = 0,
     this.source = 'mapped_rd',
@@ -256,6 +316,7 @@ class TedPlaybackSession {
         bingeKey: data['binge_key'] as String? ?? '',
         audioLanguages: (data['audio_languages'] as List).cast<String>(),
         originalLanguage: data['original_language'] as String? ?? '',
+        containerTracks: TedContainerTracks.fromTechnical(data['technical']),
         subtitles: ((data['subtitles'] as List?) ?? [])
             .map((item) => TedSubtitle.fromJson(item as Map<String, dynamic>, data['id'] as String))
             .toList(),

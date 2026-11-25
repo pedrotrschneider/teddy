@@ -37,6 +37,7 @@
 		6AD8B1672ED7B50000E9E1B5 /* WindowDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AD8B1692ED7B50000E9E1B5 /* WindowDelegate.swift */; };
 		6AD8B16A2ED7B50000E9E1B6 /* MpvPipController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6AD8B16B2ED7B50000E9E1B6 /* MpvPipController.swift */; };
 		B1D51A6A2F00110000000003 /* MpvPlayerCoreBase.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1D51A6A2F00110000000004 /* MpvPlayerCoreBase.swift */; };
+		B1D51A6A2F00110000000021 /* MpvStartupTrace.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1D51A6A2F00110000000022 /* MpvStartupTrace.swift */; };
 		B1D51A6A2F00110000000007 /* MpvPlayerPluginShared.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1D51A6A2F00110000000008 /* MpvPlayerPluginShared.swift */; };
 		B1D51A6A2F00110000000010 /* MpvAudioPlayerCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1D51A6A2F00110000000011 /* MpvAudioPlayerCore.swift */; };
 		B1D51A6A2F00110000000012 /* MpvAudioPlayerPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1D51A6A2F00110000000013 /* MpvAudioPlayerPlugin.swift */; };
@@ -106,6 +107,7 @@
 		9740EEB21CF90195004384FC /* Debug.xcconfig */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
 		A1182D4EEFEC88235D8ECD2C /* Pods_RunnerTests.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_RunnerTests.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		B1D51A6A2F00110000000004 /* MpvPlayerCoreBase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = MpvPlayerCoreBase.swift; path = ../shared/apple/MpvPlayer/MpvPlayerCoreBase.swift; sourceTree = SOURCE_ROOT; };
+		B1D51A6A2F00110000000022 /* MpvStartupTrace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MpvStartupTrace.swift; sourceTree = "<group>"; };
 		B1D51A6A2F00110000000008 /* MpvPlayerPluginShared.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = MpvPlayerPluginShared.swift; path = ../shared/apple/MpvPlayer/MpvPlayerPluginShared.swift; sourceTree = SOURCE_ROOT; };
 		B1D51A6A2F00110000000011 /* MpvAudioPlayerCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = MpvAudioPlayerCore.swift; path = ../shared/apple/MpvPlayer/MpvAudioPlayerCore.swift; sourceTree = SOURCE_ROOT; };
 		B1D51A6A2F00110000000013 /* MpvAudioPlayerPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = MpvAudioPlayerPlugin.swift; path = ../shared/apple/MpvPlayer/MpvAudioPlayerPlugin.swift; sourceTree = SOURCE_ROOT; };
@@ -234,6 +236,7 @@
 			isa = PBXGroup;
 			children = (
 				B1D51A6A2F00110000000004 /* MpvPlayerCoreBase.swift */,
+				B1D51A6A2F00110000000022 /* MpvStartupTrace.swift */,
 				B1D51A6A2F00110000000008 /* MpvPlayerPluginShared.swift */,
 				B1D51A6A2F00110000000011 /* MpvAudioPlayerCore.swift */,
 				B1D51A6A2F00110000000013 /* MpvAudioPlayerPlugin.swift */,
@@ -493,6 +496,7 @@
 				33CC10F12044A3C60003C045 /* AppDelegate.swift in Sources */,
 				335BBD1B22A9A15E00E9071D /* GeneratedPluginRegistrant.swift in Sources */,
 				B1D51A6A2F00110000000003 /* MpvPlayerCoreBase.swift in Sources */,
+				B1D51A6A2F00110000000021 /* MpvStartupTrace.swift in Sources */,
 				B1D51A6A2F00110000000007 /* MpvPlayerPluginShared.swift in Sources */,
 				B1D51A6A2F00110000000010 /* MpvAudioPlayerCore.swift in Sources */,
 				B1D51A6A2F00110000000012 /* MpvAudioPlayerPlugin.swift in Sources */,

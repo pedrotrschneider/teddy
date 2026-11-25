@@ -7,7 +7,10 @@ cd "$project_root"
 flutter pub get --enforce-lockfile
 flutter pub run build_runner build
 dart analyze lib test/ted test/mpv/player_startup_profile_test.dart test/widgets/artwork_retry_test.dart test/services/image_cache_service_test.dart
-flutter test --no-pub test/ted test/mpv/player_open_test.dart test/mpv/player_native_bridge_test.dart test/mpv/player_startup_profile_test.dart test/mpv/player_android_rate_test.dart \
+if [[ "$(uname -s)" == Darwin ]]; then
+  bash scripts/check-startup-trace-macos.sh
+fi
+flutter test --no-pub "$@" test/ted test/mpv/player_open_test.dart test/mpv/player_native_bridge_test.dart test/mpv/player_startup_profile_test.dart test/mpv/player_android_rate_test.dart \
   test/media/media_item_test.dart test/media/media_item_labels_test.dart test/media/media_hub_test.dart \
   test/media/stepped_seek_test.dart \
   test/widgets/video_controls_header_test.dart test/widgets/video_controls_first_frame_binding_test.dart \
