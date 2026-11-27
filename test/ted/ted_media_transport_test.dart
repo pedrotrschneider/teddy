@@ -14,6 +14,8 @@ import 'ted_playback_test.dart' show sessionId, mediaPath;
 class RelayFixture {
   final payload = List<int>.generate(256 << 10, (index) => index % 251);
   final calls = <(String, String, String)>[];
+  final diagnosticCalls = <(String?, String?)>[];
+  bool invalidTraceHeader = false;
   final firstPrefix = Completer<void>();
   final retryEntered = Completer<void>();
   Completer<void>? heldBody;
@@ -75,10 +77,20 @@ class RelayFixture {
     final range = request.headers.value(HttpHeaders.rangeHeader) ?? '';
     final authorization = request.headers.value(HttpHeaders.authorizationHeader) ?? '';
     calls.add((request.method, range, authorization));
+    diagnosticCalls.add((
+      request.headers.value('X-TED-Client-Request-ID'),
+      request.headers.value('X-TED-Detailed-Media'),
+    ));
     final number = calls.length;
     expect(request.uri.path, mediaPath);
     expect(request.headers.value(HttpHeaders.acceptEncodingHeader), 'identity');
     final out = request.response;
+    out.headers.set(
+      'X-TED-Request-ID',
+      invalidTraceHeader
+          ? ['https://private.invalid/SECRET', 'SECRET']
+          : '00000000-0000-4000-8000-${number.toString().padLeft(12, '0')}',
+    );
     unawaited(out.done.then((_) {}, onError: (Object _) {}));
     if (alwaysUnavailable || rejectOld && authorization == 'Bearer ted_a_${'a' * 43}') {
       out.statusCode = alwaysUnavailable ? 503 : 401;

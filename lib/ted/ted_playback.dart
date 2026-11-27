@@ -52,6 +52,9 @@ class TedPlayback extends ChangeNotifier {
   final Stopwatch _startup = Stopwatch();
   final Set<String> _startupPhases = {};
   final Stopwatch _sinceAudioUnderrun = Stopwatch();
+  final Stopwatch _bufferingWait = Stopwatch();
+  bool? _lastBuffering;
+  bool _detailedDiagnostics = tedStartupTraceEnabled;
   bool _startupReported = false;
   bool _ready = false;
   bool _nativeOpening = true, _queuedFileLoaded = false, _queuedRestart = false;
@@ -207,7 +210,19 @@ class TedPlayback extends ChangeNotifier {
       }),
     );
     _subscriptions.add(
-      player.streams.buffering.listen((_) {
+      player.streams.buffering.listen((buffering) {
+        if (!_closed && !_stopping && buffering != _lastBuffering) {
+          _lastBuffering = buffering;
+          if (buffering) {
+            _bufferingWait
+              ..reset()
+              ..start();
+          }
+          if (_detailedDiagnostics) {
+            _diagnostic(buffering ? 'buffering_started' : 'buffering_ended');
+          }
+          if (!buffering) _bufferingWait.stop();
+        }
         if (!_closed) notifyListeners();
       }),
     );
@@ -277,7 +292,8 @@ class TedPlayback extends ChangeNotifier {
       // The TED entry does not run Plezy's main/bootstrap, so own this prerequisite.
       _diagnostic('initializing');
       final settings = await SettingsService.getInstance();
-      if (player.playerType == 'mpv' && (tedStartupTraceEnabled || settings.read(SettingsService.enableDebugLogging))) {
+      _detailedDiagnostics = tedStartupTraceEnabled || settings.read(SettingsService.enableDebugLogging);
+      if (player.playerType == 'mpv' && _detailedDiagnostics) {
         appLogger.i('TED startup trace: enabled=true session=${session.id}');
         await player.setStartupTracing(true);
       }
@@ -523,7 +539,10 @@ class TedPlayback extends ChangeNotifier {
     final generation = _playheadGeneration;
     _landingWatchdog = Timer(const Duration(seconds: 15), () {
       if (_closed || _stopping || generation != _playheadGeneration || _recovery != null) return;
-      if (_seekTarget != null || _openingPosition != null) _recoverInterrupted();
+      if (_seekTarget != null || _openingPosition != null) {
+        _diagnostic('landing_timeout', targetMs: (_seekTarget ?? _openingPosition)?.inMilliseconds);
+        _recoverInterrupted();
+      }
     });
   }
 
@@ -540,7 +559,12 @@ class TedPlayback extends ChangeNotifier {
     final message =
         'TED playback: phase=$phase backend=${player.playerType} media=${session.media.kind}/${session.media.id} '
         'session=${session.id} position_ms=$positionMs attempt=$_automaticRestarts '
-        'code=${code ?? "none"} http_status=${httpStatus ?? 0} duration_ms=$durationMs queued_seeks=$_pendingSeekRequests'
+        'code=${code ?? "none"} http_status=${httpStatus ?? 0} duration_ms=$durationMs queued_seeks=$_pendingSeekRequests '
+        'confirmed_ms=${_confirmedPosition.inMilliseconds} decoded_ms=${player.decodedPosition.inMilliseconds} '
+        'opening_ms=${_openingPosition?.inMilliseconds ?? -1} seek_ms=${_seekTarget?.inMilliseconds ?? -1} '
+        'buffering=${player.state.buffering ? 1 : 0} buffering_ms=${_bufferingWait.elapsedMilliseconds} '
+        'playing=${player.state.playing ? 1 : 0} ready=${_ready ? 1 : 0} native_opening=${_nativeOpening ? 1 : 0} '
+        'expected_source=${_expectedNativeSource ?? -1} observed_source=${_observedNativeSource ?? -1} generation=$_playheadGeneration'
         '${targetMs == null ? "" : " target_ms=$targetMs"}'
         '${reason == null ? "" : " reason=$reason"}';
     if (code == null) {
